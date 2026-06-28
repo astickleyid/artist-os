@@ -1,0 +1,289 @@
+{
+  "artist": "STICK",
+  "workspace": "Golden State",
+  "tracks": [
+    {
+      "id": "soda7draft",
+      "title": "Intro Bed Candidate",
+      "filename": "demo-asset-01.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 252.58666666666667
+    },
+    {
+      "id": "beat-is-m9",
+      "title": "Demo Asset 02",
+      "filename": "demo-asset-02.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 199.18933333333334
+    },
+    {
+      "id": "candidcamera-apple-master-1",
+      "title": "Demo Asset 03",
+      "filename": "demo-asset-03.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 258.3466666666667
+    },
+    {
+      "id": "baddest-times-1",
+      "title": "Demo Asset 04",
+      "filename": "demo-asset-04.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 205.99466666666666
+    },
+    {
+      "id": "ice-you-out-sticc-serg",
+      "title": "Demo Asset 05",
+      "filename": "demo-asset-05.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 199.06467120181406
+    },
+    {
+      "id": "gone-neil-diamond",
+      "title": "Demo Asset 06",
+      "filename": "demo-asset-06.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 215.481179138322
+    },
+    {
+      "id": "spotlightv1",
+      "title": "Demo Asset 07",
+      "filename": "demo-asset-07.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 275.62666666666667
+    },
+    {
+      "id": "no-more-4",
+      "title": "Demo Asset 08",
+      "filename": "demo-asset-08.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 356.16
+    },
+    {
+      "id": "11sunset-blvd-sticc-serg-need-hook-8-13-24-8-15-pm",
+      "title": "Demo Asset 09",
+      "filename": "demo-asset-09.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 206.4950566893424
+    },
+    {
+      "id": "get-outta-my-head-her-type-originallyfw-u-no-more3-3-1",
+      "title": "Demo Asset 10",
+      "filename": "demo-asset-10.wav",
+      "url": "",
+      "created": "2026-06-28T12:00:00",
+      "modified": "2026-06-28T12:00:00",
+      "duration": 504.98133333333334
+    }
+  ],
+  "songs": [
+    {
+      "id": "golden-state",
+      "title": "Golden State",
+      "subtitle": "First marketable era \u00b7 working master",
+      "status": "In Assembly",
+      "progress": 68,
+      "quality": 81,
+      "risk": "Hook decision unresolved",
+      "sections": [
+        {
+          "name": "Intro",
+          "role": "Atmosphere",
+          "asset": "beat-is-m9",
+          "state": "Locked",
+          "score": 88,
+          "change": "Source selected"
+        },
+        {
+          "name": "Verse 1",
+          "role": "Lead vocal",
+          "asset": "soda7draft",
+          "state": "Candidate",
+          "score": 74,
+          "change": "Recording candidate"
+        },
+        {
+          "name": "Hook",
+          "role": "Melody",
+          "asset": "baddest-times-1",
+          "state": "Needs A/B",
+          "score": 79,
+          "change": "Candidate added"
+        },
+        {
+          "name": "Bridge",
+          "role": "Alt pocket",
+          "asset": "candidcamera-apple-master",
+          "state": "Experiment",
+          "score": 63,
+          "change": "Not approved"
+        },
+        {
+          "name": "Outro",
+          "role": "Space",
+          "asset": "beat-is-m9",
+          "state": "Open",
+          "score": 72,
+          "change": "Structure pending"
+        }
+      ],
+      "events": [
+        {
+          "time": "15:14",
+          "target": "Intro",
+          "op": "Source selected",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "m9 bed selected as current intro source."
+        },
+        {
+          "time": "15:16",
+          "target": "Verse 1",
+          "op": "Recording candidate",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "candidate vocal source added to working master."
+        },
+        {
+          "time": "15:22",
+          "target": "Hook",
+          "op": "Candidate added",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "melody-first hook candidate added; not master-approved."
+        },
+        {
+          "time": "15:26",
+          "target": "Bridge",
+          "op": "Experiment slot",
+          "before": "previous-demo-audio-file.wav",
+          "after": "pending",
+          "summary": "future mix experiments attach here without replacing recording."
+        }
+      ]
+    },
+    {
+      "id": "no-more",
+      "title": "No More",
+      "subtitle": "Long-form draft family",
+      "status": "Review",
+      "progress": 41,
+      "quality": 69,
+      "risk": "Too long / structure unclear",
+      "sections": [
+        {
+          "name": "Full Draft",
+          "role": "Arrangement",
+          "asset": "no-more-4",
+          "state": "Raw",
+          "score": 62,
+          "change": "Imported"
+        },
+        {
+          "name": "Alt Draft",
+          "role": "Concept",
+          "asset": "get-outta-my-head-her-type-originallyfw-u-no-more3-3",
+          "state": "Raw",
+          "score": 58,
+          "change": "Imported"
+        }
+      ],
+      "events": [
+        {
+          "time": "15:05",
+          "target": "Song",
+          "op": "Imported",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "long draft imported into workspace."
+        },
+        {
+          "time": "15:07",
+          "target": "Song",
+          "op": "Imported",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "alternate long draft attached."
+        }
+      ]
+    },
+    {
+      "id": "vault-singles",
+      "title": "Vault Singles",
+      "subtitle": "Loose songs awaiting placement",
+      "status": "Queue",
+      "progress": 24,
+      "quality": 64,
+      "risk": "No album decision",
+      "sections": [
+        {
+          "name": "Candidate",
+          "role": "Single",
+          "asset": "ice-you-out-sticc-serg",
+          "state": "Review",
+          "score": 60,
+          "change": "Imported"
+        },
+        {
+          "name": "Candidate",
+          "role": "Single",
+          "asset": "gone-neil-diamond",
+          "state": "Review",
+          "score": 57,
+          "change": "Imported"
+        },
+        {
+          "name": "Candidate",
+          "role": "Single",
+          "asset": "spotlightv1",
+          "state": "Review",
+          "score": 67,
+          "change": "Imported"
+        },
+        {
+          "name": "Candidate",
+          "role": "Single",
+          "asset": "11sunset-blvd-sticc-serg-need-hook-8-13-24-8-15-pm",
+          "state": "Needs Hook",
+          "score": 66,
+          "change": "Imported"
+        }
+      ],
+      "events": [
+        {
+          "time": "14:58",
+          "target": "Vault",
+          "op": "Imported",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "standalone song added to review queue."
+        },
+        {
+          "time": "14:59",
+          "target": "Vault",
+          "op": "Imported",
+          "before": "none",
+          "after": "demo-audio-file.wav",
+          "summary": "standalone song added to review queue."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+.DS_Store
+node_modules/
+dist/
+*.m4a
+*.mp3
+*.wav
+*.aiff
+*.flac
+*.logicx
+*.als
+library/audio/*
+!library/audio/.gitkeep
