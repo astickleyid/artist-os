@@ -1,12 +1,13 @@
 .DS_Store
-node_modules/
-dist/
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
 *.m4a
 *.mp3
 *.wav
 *.aiff
 *.flac
-*.logicx
-*.als
 library/audio/*
 !library/audio/.gitkeep

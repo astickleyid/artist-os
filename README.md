@@ -1,37 +1,57 @@
 # Artist OS
 
-Song-first creative workspace for serious artists.
+Native macOS creative workspace for serious artists.
 
-This repository contains the current **UI direction prototype** for Artist OS: a Mac-native-inspired web prototype used to lock the product layout before building the native Swift/macOS application.
+This repository is now the SwiftUI foundation for Artist OS. The earlier HTML prototype was useful for design exploration, but the production direction is a native macOS app.
 
-## Current scope
+## Product thesis
 
-- Song-first workspace
-- Current Master Composition board
-- Creative Change Log using simple target + operation language
-- Asset inspector model
+Artist OS organizes **songs**, not files. The artist works from one living song workspace while recordings, revisions, assets, and experiments stay preserved behind the glass.
+
+## Current foundation
+
+- Native SwiftUI application shell
+- macOS split-view layout
 - Library sidebar
+- Song list column
+- Song workspace detail
+- Current Master Composition board
+- Creative Change Log
+- Inspector panel
 - Command/search bar
-- Premium native-desktop visual direction
+- Mock catalog model
+- Sanitized local-only data model; no unreleased audio committed
 
-## Privacy note
+## Run
 
-This repo intentionally does **not** include private/unreleased audio. Demo metadata is sanitized. Real audio should stay local or private until storage/security architecture is finalized.
-
-## Run locally
-
-Open:
-
-```text
-app/static/index.html
+```bash
+swift run ArtistOS
 ```
 
-No build step is required for the current prototype.
+Requires macOS 13+.
 
-## Roadmap
+## Architecture
 
-1. Lock UI/UX direction.
-2. Convert prototype to native SwiftUI shell.
-3. Add real local library scanner.
-4. Add song/asset/revision database.
-5. Add AI analysis pipeline behind the established song-first data model.
+```text
+Sources/ArtistOS/
+├── App/
+├── DesignSystem/
+├── Features/
+│   ├── Inspector/
+│   ├── Library/
+│   ├── Search/
+│   ├── Shell/
+│   ├── Song/
+│   └── Timeline/
+├── Models/
+└── Services/
+```
+
+## Next build targets
+
+1. Local folder import flow.
+2. Persistent SQLite/GRDB catalog.
+3. Native audio preview using AVFoundation.
+4. Asset hover/inspector metadata.
+5. Editable Master Composition slots.
+6. Event creation and observed-change logging.
