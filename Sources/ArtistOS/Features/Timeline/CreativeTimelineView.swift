@@ -19,10 +19,11 @@ struct CreativeTimelineView: View {
 
             ForEach(events) { event in
                 HStack(alignment: .top, spacing: 14) {
-                    Text(event.timestamp, style: .time)
-                        .font(.caption.weight(.bold))
+                    Text(AOSTime.ago(event.timestamp))
+                        .font(.caption.weight(.bold).monospacedDigit())
                         .foregroundStyle(AOSTheme.muted)
-                        .frame(width: 52, alignment: .leading)
+                        .frame(width: 62, alignment: .leading)
+                        .help(event.timestamp.formatted(date: .abbreviated, time: .shortened))
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 8) {
@@ -40,6 +41,7 @@ struct CreativeTimelineView: View {
                 }
                 .padding(13)
                 .aosPanel(cornerRadius: 15)
+                .aosHoverable(cornerRadius: 15)
             }
         }
     }

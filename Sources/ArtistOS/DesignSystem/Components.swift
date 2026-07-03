@@ -25,6 +25,7 @@ struct AOSProgressBar: View {
                 Capsule()
                     .fill(LinearGradient(colors: [AOSTheme.gold, Color(red: 1.0, green: 0.86, blue: 0.52)], startPoint: .leading, endPoint: .trailing))
                     .frame(width: proxy.size.width * max(0, min(value, 1)))
+                    .animation(.snappy(duration: 0.35), value: value)
             }
         }
         .frame(height: 7)

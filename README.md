@@ -29,6 +29,9 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 - **Waveform scrubbing** — click or drag the inspector waveform to seek, with a live playhead
 - **Global Timeline and Assets views** — catalog-wide change feed and searchable asset browser from the sidebar
 - Rich asset inspector with playback scrubline and Reveal in Finder
+- **Persistent now-playing bar** — bottom playback strip with Space play/pause, scrubbing, and live position, always available regardless of panel
+- **Song management** — rename and delete (with confirmation) from the song list context menu
+- **Interaction polish** — hover affordances on all rows/cards, animated progress and list changes, live now-playing indicators, relative timestamps in activity feeds, ⌘K search focus
 - Sanitized local-only data model; no unreleased audio committed
 
 ## Run

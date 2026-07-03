@@ -27,7 +27,9 @@ struct MasterCompositionView: View {
 
             ForEach(Array(song.sections.enumerated()), id: \.element.id) { index, section in
                 MasterSectionRow(index: index + 1, song: song, section: section)
+                    .aosHoverable(cornerRadius: 17)
             }
+            .animation(.snappy(duration: 0.25), value: song.sections.map(\.id))
 
             if song.sections.isEmpty {
                 Text("No master slots yet. Add a slot to start structuring this song.")

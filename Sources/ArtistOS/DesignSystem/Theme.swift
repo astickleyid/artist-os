@@ -19,4 +19,45 @@ extension View {
             .background(AOSTheme.panel.opacity(0.86), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(AOSTheme.line, lineWidth: 1))
     }
+
+    /// Standard macOS hover affordance: subtle raise + border brighten.
+    func aosHoverable(cornerRadius: CGFloat = AOSTheme.corner) -> some View {
+        modifier(AOSHoverModifier(cornerRadius: cornerRadius))
+    }
+}
+
+struct AOSHoverModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(isHovered ? 0.045 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(isHovered ? 0.16 : 0), lineWidth: 1)
+            )
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .onHover { hovering in
+                isHovered = hovering
+            }
+    }
+}
+
+/// Shared relative timestamp ("2 hr ago") — the Linear/GitHub convention that
+/// reads faster than absolute times in activity feeds.
+enum AOSTime {
+    static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    static func ago(_ date: Date) -> String {
+        if Date().timeIntervalSince(date) < 60 { return "now" }
+        return relative.localizedString(for: date, relativeTo: Date())
+    }
 }

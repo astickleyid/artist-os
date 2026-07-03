@@ -55,6 +55,7 @@ struct SongWorkspaceView: View {
 
 struct AssetGridView: View {
     @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var audio: AudioPreviewService
     let song: Song
 
     var assets: [Asset] {
@@ -79,6 +80,12 @@ struct AssetGridView: View {
                             HStack(spacing: 8) {
                                 PlayButton(asset: asset)
                                 Text(asset.title).font(.headline.weight(.bold)).lineLimit(1)
+                                if audio.playingAssetID == asset.id {
+                                    Image(systemName: "waveform")
+                                        .font(.caption)
+                                        .foregroundStyle(AOSTheme.gold)
+                                        .symbolEffect(.variableColor.iterative, isActive: audio.isPlaying)
+                                }
                             }
                             WaveformView(asset: asset)
                                 .frame(height: 26)
@@ -95,6 +102,7 @@ struct AssetGridView: View {
                         .aosPanel(cornerRadius: 16)
                     }
                     .buttonStyle(.plain)
+                    .aosHoverable(cornerRadius: 16)
                     .draggable(asset.id.uuidString)
                     .help("Drag onto a master slot to assign")
                 }

@@ -39,9 +39,10 @@ struct GlobalTimelineColumn: View {
                                     .foregroundStyle(AOSTheme.gold)
                                     .lineLimit(1)
                                 Spacer()
-                                Text(event.timestamp.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption2)
+                                Text(AOSTime.ago(event.timestamp))
+                                    .font(.caption2.monospacedDigit())
                                     .foregroundStyle(AOSTheme.muted)
+                                    .help(event.timestamp.formatted(date: .abbreviated, time: .shortened))
                             }
                             HStack(spacing: 8) {
                                 Text(event.target.rawValue)
@@ -60,6 +61,7 @@ struct GlobalTimelineColumn: View {
                         .aosPanel(cornerRadius: 14)
                     }
                     .buttonStyle(.plain)
+                    .aosHoverable(cornerRadius: 14)
                 }
             }
             .padding(14)
@@ -130,6 +132,7 @@ struct GlobalAssetsColumn: View {
                         .aosPanel(cornerRadius: 13)
                     }
                     .buttonStyle(.plain)
+                    .aosHoverable(cornerRadius: 13)
                     .draggable(asset.id.uuidString)
                 }
             }

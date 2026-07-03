@@ -93,6 +93,37 @@ final class AppState: ObservableObject {
         selectedSongID = song.id
     }
 
+    func renameSong(id: UUID, to newTitle: String) {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let si = songIndex(id),
+              catalog.songs[si].title != trimmed else { return }
+        let old = catalog.songs[si].title
+        catalog.songs[si].title = trimmed
+        persist(catalog.songs[si])
+        record(songID: id, target: .song, operation: .structureUpdated,
+               summary: "Renamed from \(old) to \(trimmed).")
+    }
+
+    func deleteSong(id: UUID) {
+        guard let si = songIndex(id) else { return }
+        // Stop playback if the active preview belongs to this song.
+        if let playingID = audio.playingAssetID,
+           catalog.assets.first(where: { $0.id == playingID })?.songID == id {
+            audio.stop()
+        }
+        let title = catalog.songs[si].title
+        catalog.songs.remove(at: si)
+        catalog.assets.removeAll { $0.songID == id }
+        catalog.events.removeAll { $0.songID == id }
+        do { try store.delete(songID: id) }
+        catch { logger.error("Failed to delete song: \(error.localizedDescription)") }
+        if selectedSongID == id {
+            selectedSongID = catalog.songs.first?.id
+            selectedAssetID = nil
+        }
+        logger.info("Deleted song \(title)")
+    }
+
     func assign(assetID: UUID?, sectionID: UUID, songID: UUID) {
         guard let si = songIndex(songID),
               let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
