@@ -28,7 +28,7 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 swift run ArtistOS
 ```
 
-Requires macOS 13+.
+Requires macOS 14+.
 
 ## Architecture
 
