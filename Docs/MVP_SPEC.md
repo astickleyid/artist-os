@@ -35,4 +35,4 @@ MVP complete: folder import (cancellable, hash-deduplicated), GRDB persistence, 
 
 ## Next implementation step
 
-Startup reconciliation scan — diff watched folders against the catalog at launch so changes made while the app was closed are also observed.
+MVP is feature-complete. Next phase candidates: A/B decision mode, waveform scrubbing, Creative DNA analytics.

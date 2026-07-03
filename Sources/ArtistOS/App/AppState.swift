@@ -33,7 +33,7 @@ final class AppState: ObservableObject {
     private let logger = Logger(subsystem: "com.stickley.artistos", category: "AppState")
     private static let seedKey = "aos.didSeedMockCatalog"
 
-    init(store: CatalogStore = .makeDefault(), seedIfNeeded: Bool = true) {
+    init(store: CatalogStore = .makeDefault(), seedIfNeeded: Bool = true, enableWatching: Bool = true) {
         self.store = store
         if seedIfNeeded, store.isEmpty, !UserDefaults.standard.bool(forKey: Self.seedKey) {
             store.seed(MockCatalog.make())
@@ -43,10 +43,14 @@ final class AppState: ObservableObject {
         selectedSongID = catalog.songs.first?.id
         watchedFolders = store.watchedFolders()
 
-        watchService.onChanges = { [weak self] paths in
-            self?.enqueueWatchedChanges(paths)
+        if enableWatching {
+            watchService.onChanges = { [weak self] paths in
+                self?.enqueueWatchedChanges(paths)
+            }
+            watchService.update(folders: watchedFolders)
+            // Catch anything that changed while the app was closed.
+            Task { await self.reconcileWatchedFolders() }
         }
-        watchService.update(folders: watchedFolders)
     }
 
     // MARK: - Lookups
@@ -347,61 +351,150 @@ final class AppState: ObservableObject {
         guard !paths.isEmpty, importProgress == nil else { return }
 
         var existingHashes = Set(catalog.assets.compactMap(\.contentHash))
-
         for path in paths.sorted() {
-            let exists = FileManager.default.fileExists(atPath: path)
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                await observeFile(at: url, existingHashes: &existingHashes)
+            } else if let asset = catalog.assets.first(where: { $0.sourcePath == canonicalPath(path) }) {
+                observeMissing(asset: asset)
+            }
+        }
+    }
 
-            if let assetIndex = catalog.assets.firstIndex(where: { $0.sourcePath == path }) {
-                let asset = catalog.assets[assetIndex]
-                guard let songID = asset.songID else { continue }
-                if exists {
-                    record(songID: songID, target: target(forRole: asset.role),
-                           operation: .recordingUpdated, after: asset.id,
-                           summary: "\(asset.originalFilename) changed on disk (observed).",
-                           confidence: 0.8)
-                } else {
-                    record(songID: songID, target: target(forRole: asset.role),
-                           operation: .archived, before: asset.id,
-                           summary: "\(asset.originalFilename) removed from disk (observed).",
-                           confidence: 0.8)
-                }
+    /// Startup / on-demand diff of watched folders against the catalog, so
+    /// activity that happened while the app was closed is still observed.
+    func reconcileWatchedFolders() async {
+        guard importProgress == nil, !watchedFolders.isEmpty else { return }
+        var existingHashes = Set(catalog.assets.compactMap(\.contentHash))
+
+        for folder in watchedFolders {
+            let rootURL = folder.resolveURL().resolvingSymlinksInPath().standardizedFileURL
+            let didAccess = rootURL.startAccessingSecurityScopedResource()
+            defer { if didAccess { rootURL.stopAccessingSecurityScopedResource() } }
+
+            guard let listing = ImportService.listFiles(in: rootURL) else {
+                logger.warning("Reconciliation could not read \(folder.path)")
                 continue
             }
 
-            guard exists,
-                  let root = watchedFolders.first(where: { path.hasPrefix($0.path + "/") || path == $0.path })
-            else { continue }
-
-            let url = URL(fileURLWithPath: path)
-            var asset = await ImportService.makeAsset(url: url, songID: UUID())
-            if let hash = asset.contentHash, existingHashes.contains(hash) { continue }
-            if let hash = asset.contentHash { existingHashes.insert(hash) }
-
-            let group = ImportService.group(for: url, base: URL(fileURLWithPath: root.path))
-            let title = ImportService.titleize(group, stripExtension: false)
-            let songID: UUID
-            if let existing = catalog.songs.first(where: {
-                $0.title.caseInsensitiveCompare(title) == .orderedSame
-            }) {
-                songID = existing.id
-            } else {
-                let song = ImportService.makeSong(title: title)
-                catalog.songs.append(song)
-                persist(song)
-                songID = song.id
-                record(songID: songID, target: .song, operation: .imported,
-                       summary: "\(title) detected in watched folder (observed).", confidence: 0.8)
+            for fileURL in listing.audio {
+                await observeFile(at: fileURL, existingHashes: &existingHashes)
             }
 
-            asset.songID = songID
-            catalog.assets.append(asset)
-            do { try store.insert(asset: asset) }
-            catch { logger.error("Failed to persist observed asset: \(error.localizedDescription)") }
-            record(songID: songID, target: target(forRole: asset.role),
-                   operation: .imported, after: asset.id,
-                   summary: "\(asset.originalFilename) appeared in watched folder (observed).",
-                   confidence: 0.8)
+            let diskPaths = Set(listing.audio.map(\.path))
+            let rootPrefix = rootURL.path + "/"
+            for asset in catalog.assets {
+                guard let sourcePath = asset.sourcePath,
+                      sourcePath.hasPrefix(rootPrefix),
+                      !diskPaths.contains(sourcePath)
+                else { continue }
+                observeMissing(asset: asset)
+            }
         }
+        logger.info("Reconciliation pass complete.")
+    }
+
+    /// Handles one on-disk audio file: refreshes a known asset if its
+    /// modification time moved, or imports it as a new observed asset.
+    private func observeFile(at rawURL: URL, existingHashes: inout Set<String>) async {
+        let url = rawURL.resolvingSymlinksInPath().standardizedFileURL
+        let path = url.path
+
+        if let index = catalog.assets.firstIndex(where: { $0.sourcePath == path }) {
+            let known = catalog.assets[index]
+            guard let diskModified = try? url.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate else { return }
+
+            if let recorded = known.fileModifiedAt {
+                guard abs(diskModified.timeIntervalSince(recorded)) > 1 else { return }
+                await refreshAsset(at: index)
+                if let songID = known.songID {
+                    record(songID: songID, target: target(forRole: known.role),
+                           operation: .recordingUpdated, after: known.id,
+                           summary: "\(known.originalFilename) changed on disk (observed).",
+                           confidence: 0.8)
+                }
+            } else {
+                // Pre-v3 asset: establish a baseline silently instead of
+                // spamming change events on first launch after upgrade.
+                catalog.assets[index].fileModifiedAt = diskModified
+                do { try store.insert(asset: catalog.assets[index]) }
+                catch { logger.error("Failed to baseline asset: \(error.localizedDescription)") }
+            }
+            return
+        }
+
+        guard let root = watchedFolders.first(where: {
+            let rootPath = canonicalPath($0.path)
+            return path.hasPrefix(rootPath + "/") || path == rootPath
+        }) else { return }
+
+        var asset = await ImportService.makeAsset(url: url, songID: UUID())
+        if let hash = asset.contentHash {
+            if existingHashes.contains(hash) { return }
+            existingHashes.insert(hash)
+        }
+
+        let rootURL = URL(fileURLWithPath: canonicalPath(root.path))
+        let group = ImportService.group(for: url, base: rootURL)
+        let title = ImportService.titleize(group, stripExtension: false)
+        let songID: UUID
+        if let existing = catalog.songs.first(where: {
+            $0.title.caseInsensitiveCompare(title) == .orderedSame
+        }) {
+            songID = existing.id
+        } else {
+            let song = ImportService.makeSong(title: title)
+            catalog.songs.append(song)
+            persist(song)
+            songID = song.id
+            record(songID: songID, target: .song, operation: .imported,
+                   summary: "\(title) detected in watched folder (observed).", confidence: 0.8)
+        }
+
+        asset.songID = songID
+        catalog.assets.append(asset)
+        do { try store.insert(asset: asset) }
+        catch { logger.error("Failed to persist observed asset: \(error.localizedDescription)") }
+        record(songID: songID, target: target(forRole: asset.role),
+               operation: .imported, after: asset.id,
+               summary: "\(asset.originalFilename) appeared in watched folder (observed).",
+               confidence: 0.8)
+    }
+
+    /// Records a single archived event per asset when its file disappears.
+    private func observeMissing(asset: Asset) {
+        guard let songID = asset.songID, !hasArchivedEvent(for: asset.id) else { return }
+        record(songID: songID, target: target(forRole: asset.role),
+               operation: .archived, before: asset.id,
+               summary: "\(asset.originalFilename) removed from disk (observed).",
+               confidence: 0.8)
+    }
+
+    /// Re-reads duration, hash, size, and modification time from disk while
+    /// preserving the asset's identity and curated fields.
+    private func refreshAsset(at index: Int) async {
+        let old = catalog.assets[index]
+        guard let path = old.sourcePath else { return }
+        var fresh = await ImportService.makeAsset(url: URL(fileURLWithPath: path), songID: old.songID ?? old.id)
+        guard index < catalog.assets.count, catalog.assets[index].id == old.id else { return }
+        fresh.id = old.id
+        fresh.songID = old.songID
+        fresh.title = old.title
+        fresh.role = old.role
+        fresh.createdAt = old.createdAt
+        catalog.assets[index] = fresh
+        do { try store.insert(asset: fresh) }
+        catch { logger.error("Failed to refresh asset: \(error.localizedDescription)") }
+    }
+
+    private func hasArchivedEvent(for assetID: UUID) -> Bool {
+        catalog.events.contains { $0.operation == .archived && $0.beforeAssetID == assetID }
+    }
+
+    private func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     // MARK: - Persistence helpers

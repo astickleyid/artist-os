@@ -58,6 +58,7 @@ struct Asset: Identifiable, Codable, Equatable {
     var sampleRate: Double? = nil
     var channels: Int? = nil
     var contentHash: String? = nil
+    var fileModifiedAt: Date? = nil
 }
 
 struct WatchedFolder: Identifiable, Codable, Equatable {

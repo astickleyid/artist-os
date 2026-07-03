@@ -91,6 +91,7 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
     var sampleRate: Double?
     var channels: Int?
     var contentHash: String?
+    var fileModifiedAt: Date?
 
     init(_ asset: Asset) {
         id = asset.id
@@ -107,6 +108,7 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
         sampleRate = asset.sampleRate
         channels = asset.channels
         contentHash = asset.contentHash
+        fileModifiedAt = asset.fileModifiedAt
     }
 
     func toDomain() -> Asset {
@@ -124,7 +126,8 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
             format: format,
             sampleRate: sampleRate,
             channels: channels,
-            contentHash: contentHash
+            contentHash: contentHash,
+            fileModifiedAt: fileModifiedAt
         )
     }
 }

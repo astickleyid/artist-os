@@ -102,6 +102,12 @@ final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "fileModifiedAt", .datetime)
+            }
+        }
+
         return migrator
     }
 }

@@ -109,29 +109,13 @@ enum ImportService {
 
         let base = folder.resolvingSymlinksInPath().standardizedFileURL
 
-        guard let enumerator = FileManager.default.enumerator(
-            at: base,
-            includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .creationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        guard let listing = listFiles(in: base) else {
             throw ImportError.cannotEnumerate
         }
-
-        var audioFiles: [(url: URL, group: String)] = []
-        var skipped = 0
-
-        for case let url as URL in enumerator {
-            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if isDirectory { continue }
-
-            guard audioExtensions.contains(url.pathExtension.lowercased()) else {
-                skipped += 1
-                continue
-            }
-
-            let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-            audioFiles.append((resolved, group(for: resolved, base: base)))
+        let audioFiles: [(url: URL, group: String)] = listing.audio.map {
+            ($0, group(for: $0, base: base))
         }
+        let skipped = listing.skippedNonAudio
 
         let total = audioFiles.count
         var processed = 0
@@ -156,6 +140,29 @@ enum ImportService {
             songs: songsByGroup.keys.sorted().compactMap { songsByGroup[$0] },
             skippedFiles: skipped
         )
+    }
+
+    /// Recursive listing of canonical audio-file URLs under a folder, plus a
+    /// count of skipped non-audio files. Shared by scan and reconciliation.
+    static func listFiles(in base: URL) -> (audio: [URL], skippedNonAudio: Int)? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: base,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        var audio: [URL] = []
+        var skipped = 0
+        for case let url as URL in enumerator {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDirectory { continue }
+            if audioExtensions.contains(url.pathExtension.lowercased()) {
+                audio.append(url.resolvingSymlinksInPath().standardizedFileURL)
+            } else {
+                skipped += 1
+            }
+        }
+        return (audio, skipped)
     }
 
     /// Song-grouping rule shared by import scan and the folder watcher:
@@ -204,7 +211,9 @@ enum ImportService {
     // MARK: - Metadata
 
     static func makeAsset(url: URL, songID: UUID) async -> Asset {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+        let values = try? url.resourceValues(
+            forKeys: [.fileSizeKey, .creationDateKey, .contentModificationDateKey]
+        )
 
         var duration: TimeInterval?
         var sampleRate: Double?
@@ -245,7 +254,8 @@ enum ImportService {
             format: url.pathExtension.uppercased(),
             sampleRate: sampleRate,
             channels: channels,
-            contentHash: hash
+            contentHash: hash,
+            fileModifiedAt: values?.contentModificationDate
         )
     }
 }

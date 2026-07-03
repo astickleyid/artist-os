@@ -21,6 +21,7 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 - **Editable Master Composition** — assign assets to slots, set states, edit notes, add/remove slots; progress and risk recompute automatically
 - **Creative event logging** — automatic events for imports and master edits, plus manual Log Change entry (⌘⇧L)
 - **Filesystem watcher (FSEvents)** — imported folders are watched; new, changed, and removed audio files generate observed creative events automatically, and new files auto-import into the right song
+- **Startup reconciliation** — watched folders are diffed against the catalog at launch, so activity while the app was closed is still observed; change detection is modification-time gated and archive events fire once per asset
 - **Duplicate detection** — SHA-256 content hashing skips files already in the catalog; imports are cancellable mid-scan
 - **Waveform rendering** — downsampled peak waveforms on asset cards and in the inspector
 - **Drag-and-drop assignment** — drag any asset card onto a master slot; slots also reorder via Move Up/Down
@@ -61,6 +62,5 @@ Catalog database lives at `~/Library/Application Support/ArtistOS/catalog.sqlite
 
 1. Waveform scrubbing (click-to-seek on the inspector waveform).
 2. A/B comparison mode for Needs Decision slots.
-3. Startup reconciliation scan (catch changes that happened while the app was closed).
-4. Creative DNA analytics once observed history accumulates.
-5. Cloud sync + iPhone companion capture app (deferred per MVP spec).
+3. Creative DNA analytics once observed history accumulates.
+4. Cloud sync + iPhone companion capture app (deferred per MVP spec).

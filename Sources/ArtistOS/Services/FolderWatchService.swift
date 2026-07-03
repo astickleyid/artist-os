@@ -2,6 +2,24 @@ import Foundation
 import CoreServices
 import os
 
+extension WatchedFolder {
+    /// Bookmark-resolved URL when available, raw path otherwise.
+    func resolveURL() -> URL {
+        if let bookmark {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                return url
+            }
+        }
+        return URL(fileURLWithPath: path)
+    }
+}
+
 /// Thin Swift wrapper over an FSEvents stream (recursive, file-level events).
 /// FSEvents is the canonical macOS API for observing folder trees — the same
 /// mechanism Dropbox-style sync clients and DAW media managers rely on.
@@ -82,7 +100,7 @@ final class FolderWatchService {
 
         var watchPaths: [String] = []
         for folder in folders {
-            let url = resolveURL(for: folder)
+            let url = folder.resolveURL()
             if url.startAccessingSecurityScopedResource() {
                 accessedURLs.append(url)
             }
@@ -111,20 +129,5 @@ final class FolderWatchService {
             url.stopAccessingSecurityScopedResource()
         }
         accessedURLs = []
-    }
-
-    private func resolveURL(for folder: WatchedFolder) -> URL {
-        if let bookmark = folder.bookmark {
-            var isStale = false
-            if let url = try? URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
-                return url
-            }
-        }
-        return URL(fileURLWithPath: folder.path)
     }
 }
