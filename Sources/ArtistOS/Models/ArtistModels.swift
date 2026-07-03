@@ -57,6 +57,18 @@ struct Asset: Identifiable, Codable, Equatable {
     var format: String? = nil
     var sampleRate: Double? = nil
     var channels: Int? = nil
+    var contentHash: String? = nil
+}
+
+struct WatchedFolder: Identifiable, Codable, Equatable {
+    var id: UUID
+    var path: String
+    var bookmark: Data?
+    var addedAt: Date
+
+    var displayName: String {
+        (path as NSString).lastPathComponent
+    }
 }
 
 enum AssetRole: String, Codable, CaseIterable {

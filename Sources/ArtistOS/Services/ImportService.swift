@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import CoreMedia
+import CryptoKit
 
 struct ImportedSong {
     var song: Song
@@ -20,6 +21,11 @@ enum ImportError: Error, LocalizedError {
         case .cannotEnumerate: return "The folder could not be read."
         }
     }
+}
+
+struct DedupResult {
+    var unique: [Asset]
+    var duplicateCount: Int
 }
 
 /// Scans a local folder into songs + assets.
@@ -102,7 +108,6 @@ enum ImportService {
         }
 
         let base = folder.resolvingSymlinksInPath().standardizedFileURL
-        let baseComponents = base.pathComponents
 
         guard let enumerator = FileManager.default.enumerator(
             at: base,
@@ -125,9 +130,7 @@ enum ImportService {
             }
 
             let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-            let relative = Array(resolved.pathComponents.dropFirst(baseComponents.count))
-            let group = relative.count > 1 ? relative[0] : base.lastPathComponent
-            audioFiles.append((resolved, group))
+            audioFiles.append((resolved, group(for: resolved, base: base)))
         }
 
         let total = audioFiles.count
@@ -135,6 +138,7 @@ enum ImportService {
         var songsByGroup: [String: ImportedSong] = [:]
 
         for entry in audioFiles {
+            try Task.checkCancellation()
             if songsByGroup[entry.group] == nil {
                 songsByGroup[entry.group] = ImportedSong(
                     song: makeSong(title: titleize(entry.group, stripExtension: false)),
@@ -152,6 +156,49 @@ enum ImportService {
             songs: songsByGroup.keys.sorted().compactMap { songsByGroup[$0] },
             skippedFiles: skipped
         )
+    }
+
+    /// Song-grouping rule shared by import scan and the folder watcher:
+    /// first path component under the base folder, else the base folder itself.
+    static func group(for url: URL, base: URL) -> String {
+        let baseComponents = base.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let fileComponents = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        guard fileComponents.count > baseComponents.count else {
+            return base.lastPathComponent
+        }
+        let relative = Array(fileComponents.dropFirst(baseComponents.count))
+        return relative.count > 1 ? relative[0] : base.lastPathComponent
+    }
+
+    /// Streaming SHA-256 of file contents, used for duplicate detection.
+    static func contentHash(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            guard let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Splits scanned assets into unique vs. already-in-catalog by content hash.
+    /// Assets without a hash (unreadable files) always pass through as unique.
+    static func partitionDuplicates(assets: [Asset], existingHashes: Set<String>) -> DedupResult {
+        var seen = existingHashes
+        var unique: [Asset] = []
+        var duplicates = 0
+        for asset in assets {
+            if let hash = asset.contentHash {
+                if seen.contains(hash) {
+                    duplicates += 1
+                    continue
+                }
+                seen.insert(hash)
+            }
+            unique.append(asset)
+        }
+        return DedupResult(unique: unique, duplicateCount: duplicates)
     }
 
     // MARK: - Metadata
@@ -176,6 +223,8 @@ enum ImportService {
             channels = Int(asbd.pointee.mChannelsPerFrame)
         }
 
+        let hash = contentHash(of: url)
+
         let bookmark = try? url.bookmarkData(
             options: [.withSecurityScope],
             includingResourceValuesForKeys: nil,
@@ -195,7 +244,8 @@ enum ImportService {
             fileSize: (values?.fileSize).map(Int64.init),
             format: url.pathExtension.uppercased(),
             sampleRate: sampleRate,
-            channels: channels
+            channels: channels,
+            contentHash: hash
         )
     }
 }

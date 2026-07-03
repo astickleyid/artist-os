@@ -31,7 +31,7 @@ final class AudioPreviewService: ObservableObject {
 
     func play(asset: Asset) {
         stop()
-        guard let url = resolveURL(for: asset) else {
+        guard let url = AssetFileResolver.url(for: asset) else {
             logger.error("No playable source for asset \(asset.originalFilename)")
             return
         }
@@ -102,23 +102,5 @@ final class AudioPreviewService: ObservableObject {
         isPlaying = false
         currentTime = 0
         duration = 0
-    }
-
-    private func resolveURL(for asset: Asset) -> URL? {
-        if let bookmark = asset.localURLBookmark {
-            var isStale = false
-            if let url = try? URL(
-                resolvingBookmarkData: bookmark,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
-                return url
-            }
-        }
-        if let path = asset.sourcePath, FileManager.default.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        return nil
     }
 }

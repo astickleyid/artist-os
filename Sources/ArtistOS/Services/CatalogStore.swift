@@ -95,6 +95,28 @@ final class CatalogStore {
         }
     }
 
+    // MARK: - Watched folders
+
+    func watchedFolders() -> [WatchedFolder] {
+        (try? database.dbQueue.read { db in
+            try WatchedFolderRecord.order(Column("addedAt")).fetchAll(db).map { $0.toDomain() }
+        }) ?? []
+    }
+
+    func save(watchedFolder: WatchedFolder) throws {
+        try database.dbQueue.write { db in
+            // Unique on path: replace an existing entry for the same folder.
+            try WatchedFolderRecord.filter(Column("path") == watchedFolder.path).deleteAll(db)
+            try WatchedFolderRecord(watchedFolder).save(db)
+        }
+    }
+
+    func deleteWatchedFolder(id: UUID) throws {
+        _ = try database.dbQueue.write { db in
+            try WatchedFolderRecord.filter(Column("id") == id).deleteAll(db)
+        }
+    }
+
     func seed(_ catalog: ArtistCatalog) {
         do {
             try database.dbQueue.write { db in

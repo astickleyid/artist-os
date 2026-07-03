@@ -31,8 +31,8 @@ Operations: Imported, Source Selected, Candidate Added, Recording Updated, Proce
 
 ## Status
 
-Folder import, GRDB persistence, audio preview, editable master slots, and event logging are implemented.
+MVP complete: folder import (cancellable, hash-deduplicated), GRDB persistence, audio preview, waveforms, editable + reorderable master slots with drag-and-drop assignment, manual and automatic event logging, and the FSEvents folder watcher generating observed creative events from real file activity.
 
 ## Next implementation step
 
-Filesystem watcher for observed-change detection, so events are generated from real file activity instead of manual entry.
+Startup reconciliation scan — diff watched folders against the catalog at launch so changes made while the app was closed are also observed.

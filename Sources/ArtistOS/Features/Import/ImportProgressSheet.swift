@@ -46,6 +46,13 @@ struct ImportProgressSheet: View {
                     ProgressView()
                         .progressViewStyle(.linear)
                 }
+                HStack {
+                    Spacer()
+                    Button("Cancel Import") {
+                        state.cancelImport()
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
         }
         .padding(20)

@@ -11,7 +11,16 @@ struct ArtistOSShellView: View {
         } content: {
             VStack(spacing: 0) {
                 CommandBarView()
-                SongListColumn()
+                switch state.selectedNavigation {
+                case .songs:
+                    SongListColumn()
+                case .timeline:
+                    GlobalTimelineColumn()
+                case .assets:
+                    GlobalAssetsColumn()
+                case .dna:
+                    DNAPlaceholderColumn()
+                }
             }
             .background(AOSTheme.background)
             .navigationSplitViewColumnWidth(min: 320, ideal: 370, max: 440)

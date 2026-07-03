@@ -53,6 +53,7 @@ struct MasterSectionRow: View {
 
     @State private var isEditingNote = false
     @State private var noteDraft = ""
+    @State private var isDropTargeted = false
 
     private var asset: Asset? { state.asset(id: section.assetID) }
 
@@ -104,9 +105,20 @@ struct MasterSectionRow: View {
         }
         .padding(13)
         .aosPanel(cornerRadius: 17)
+        .overlay(
+            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .stroke(isDropTargeted ? AOSTheme.gold : .clear, lineWidth: 2)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             state.selectedAssetID = section.assetID
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let raw = items.first, let assetID = UUID(uuidString: raw) else { return false }
+            state.assign(assetID: assetID, sectionID: section.id, songID: song.id)
+            return true
+        } isTargeted: { targeted in
+            isDropTargeted = targeted
         }
         .sheet(isPresented: $isEditingNote) {
             noteEditor
@@ -136,6 +148,13 @@ struct MasterSectionRow: View {
             Button("Edit Note…") {
                 noteDraft = section.note
                 isEditingNote = true
+            }
+            Divider()
+            Button("Move Up") {
+                state.moveSection(sectionID: section.id, songID: song.id, offset: -1)
+            }
+            Button("Move Down") {
+                state.moveSection(sectionID: section.id, songID: song.id, offset: 1)
             }
             Divider()
             Button("Remove Slot", role: .destructive) {

@@ -88,6 +88,20 @@ final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v2") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "contentHash", .text)
+            }
+            try db.create(index: "asset_contentHash", on: "asset", columns: ["contentHash"])
+
+            try db.create(table: "watchedFolder") { t in
+                t.column("id", .text).primaryKey()
+                t.column("path", .text).notNull().unique()
+                t.column("bookmark", .blob)
+                t.column("addedAt", .datetime).notNull()
+            }
+        }
+
         return migrator
     }
 }

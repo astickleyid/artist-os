@@ -21,21 +21,32 @@ final class AppState: ObservableObject {
     @Published var isLogChangePresented: Bool = false
     @Published var importProgress: ImportProgress?
     @Published var catalog: ArtistCatalog
+    @Published var watchedFolders: [WatchedFolder] = []
 
     let audio = AudioPreviewService()
 
     private let store: CatalogStore
+    private let watchService = FolderWatchService()
+    private var importTask: Task<Void, Never>?
+    private var pendingWatchPaths: Set<String> = []
+    private var watchDebounceTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.stickley.artistos", category: "AppState")
     private static let seedKey = "aos.didSeedMockCatalog"
 
-    init(store: CatalogStore = .makeDefault()) {
+    init(store: CatalogStore = .makeDefault(), seedIfNeeded: Bool = true) {
         self.store = store
-        if store.isEmpty && !UserDefaults.standard.bool(forKey: Self.seedKey) {
+        if seedIfNeeded, store.isEmpty, !UserDefaults.standard.bool(forKey: Self.seedKey) {
             store.seed(MockCatalog.make())
             UserDefaults.standard.set(true, forKey: Self.seedKey)
         }
         self.catalog = store.loadCatalog(artistName: "STICK")
         selectedSongID = catalog.songs.first?.id
+        watchedFolders = store.watchedFolders()
+
+        watchService.onChanges = { [weak self] paths in
+            self?.enqueueWatchedChanges(paths)
+        }
+        watchService.update(folders: watchedFolders)
     }
 
     // MARK: - Lookups
@@ -149,6 +160,19 @@ final class AppState: ObservableObject {
                summary: "\(trimmed) slot added to master composition.")
     }
 
+    func moveSection(sectionID: UUID, songID: UUID, offset: Int) {
+        guard let si = songIndex(songID),
+              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
+        else { return }
+        let destination = xi + offset
+        guard destination >= 0, destination < catalog.songs[si].sections.count else { return }
+        catalog.songs[si].sections.swapAt(xi, destination)
+        persistSong(at: si)
+        let name = catalog.songs[si].sections[destination].name
+        record(songID: songID, target: .song, operation: .structureUpdated,
+               summary: "\(name) moved to position \(destination + 1).")
+    }
+
     func removeSection(sectionID: UUID, songID: UUID) {
         guard let si = songIndex(songID),
               let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
@@ -199,7 +223,7 @@ final class AppState: ObservableObject {
     func importFolder(url: URL) {
         guard importProgress == nil else { return }
         importProgress = ImportProgress(phase: "Scanning \(url.lastPathComponent)…")
-        Task {
+        importTask = Task {
             do {
                 let outcome = try await ImportService.scan(folder: url) { [weak self] processed, total in
                     Task { @MainActor in
@@ -209,18 +233,34 @@ final class AppState: ObservableObject {
                     }
                 }
                 merge(outcome)
+                registerWatchedFolder(url: url)
+            } catch is CancellationError {
+                importProgress?.finishedSummary = "Import cancelled. Nothing was added."
             } catch {
                 importProgress?.errorMessage = error.localizedDescription
                 importProgress?.finishedSummary = "Import failed."
             }
+            importTask = nil
         }
+    }
+
+    func cancelImport() {
+        importTask?.cancel()
     }
 
     private func merge(_ outcome: ImportOutcome) {
         var newSongs = 0
         var newAssets = 0
+        var duplicates = 0
+        var existingHashes = Set(catalog.assets.compactMap(\.contentHash))
 
         for item in outcome.songs {
+            let dedup = ImportService.partitionDuplicates(
+                assets: item.assets, existingHashes: existingHashes
+            )
+            duplicates += dedup.duplicateCount
+            existingHashes.formUnion(dedup.unique.compactMap(\.contentHash))
+            guard !dedup.unique.isEmpty else { continue }
             let targetSongID: UUID
             if let existing = catalog.songs.first(where: {
                 $0.title.caseInsensitiveCompare(item.song.title) == .orderedSame
@@ -235,7 +275,7 @@ final class AppState: ObservableObject {
                        summary: "\(item.song.title) imported from local folder.")
             }
 
-            for var asset in item.assets {
+            for var asset in dedup.unique {
                 asset.songID = targetSongID
                 catalog.assets.append(asset)
                 do { try store.insert(asset: asset) }
@@ -251,7 +291,117 @@ final class AppState: ObservableObject {
             selectedSongID = catalog.songs.first?.id
         }
         importProgress?.finishedSummary =
-            "\(newAssets) asset\(newAssets == 1 ? "" : "s") imported · \(newSongs) new song\(newSongs == 1 ? "" : "s") · \(outcome.skippedFiles) non-audio file\(outcome.skippedFiles == 1 ? "" : "s") skipped."
+            "\(newAssets) asset\(newAssets == 1 ? "" : "s") imported · \(newSongs) new song\(newSongs == 1 ? "" : "s") · \(duplicates) duplicate\(duplicates == 1 ? "" : "s") skipped · \(outcome.skippedFiles) non-audio file\(outcome.skippedFiles == 1 ? "" : "s") skipped. This folder is now watched for creative activity."
+    }
+
+    // MARK: - Watched folders
+
+    func removeWatchedFolder(id: UUID) {
+        guard let folder = watchedFolders.first(where: { $0.id == id }) else { return }
+        do { try store.deleteWatchedFolder(id: id) }
+        catch { logger.error("Failed to remove watched folder: \(error.localizedDescription)") }
+        watchedFolders.removeAll { $0.id == id }
+        watchService.update(folders: watchedFolders)
+        logger.info("Stopped watching \(folder.path)")
+    }
+
+    private func registerWatchedFolder(url: URL) {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard !watchedFolders.contains(where: { $0.path == path }) else { return }
+        let bookmark = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        let folder = WatchedFolder(id: UUID(), path: path, bookmark: bookmark, addedAt: Date())
+        do { try store.save(watchedFolder: folder) }
+        catch {
+            logger.error("Failed to persist watched folder: \(error.localizedDescription)")
+            return
+        }
+        watchedFolders.append(folder)
+        watchService.update(folders: watchedFolders)
+    }
+
+    // MARK: - Observed changes (the product thesis: events from real activity)
+
+    private func enqueueWatchedChanges(_ paths: [String]) {
+        for path in paths {
+            let ext = (path as NSString).pathExtension.lowercased()
+            if ImportService.audioExtensions.contains(ext) {
+                pendingWatchPaths.insert(path)
+            }
+        }
+        guard !pendingWatchPaths.isEmpty else { return }
+        watchDebounceTask?.cancel()
+        watchDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.processWatchedChanges()
+        }
+    }
+
+    private func processWatchedChanges() async {
+        let paths = pendingWatchPaths
+        pendingWatchPaths = []
+        guard !paths.isEmpty, importProgress == nil else { return }
+
+        var existingHashes = Set(catalog.assets.compactMap(\.contentHash))
+
+        for path in paths.sorted() {
+            let exists = FileManager.default.fileExists(atPath: path)
+
+            if let assetIndex = catalog.assets.firstIndex(where: { $0.sourcePath == path }) {
+                let asset = catalog.assets[assetIndex]
+                guard let songID = asset.songID else { continue }
+                if exists {
+                    record(songID: songID, target: target(forRole: asset.role),
+                           operation: .recordingUpdated, after: asset.id,
+                           summary: "\(asset.originalFilename) changed on disk (observed).",
+                           confidence: 0.8)
+                } else {
+                    record(songID: songID, target: target(forRole: asset.role),
+                           operation: .archived, before: asset.id,
+                           summary: "\(asset.originalFilename) removed from disk (observed).",
+                           confidence: 0.8)
+                }
+                continue
+            }
+
+            guard exists,
+                  let root = watchedFolders.first(where: { path.hasPrefix($0.path + "/") || path == $0.path })
+            else { continue }
+
+            let url = URL(fileURLWithPath: path)
+            var asset = await ImportService.makeAsset(url: url, songID: UUID())
+            if let hash = asset.contentHash, existingHashes.contains(hash) { continue }
+            if let hash = asset.contentHash { existingHashes.insert(hash) }
+
+            let group = ImportService.group(for: url, base: URL(fileURLWithPath: root.path))
+            let title = ImportService.titleize(group, stripExtension: false)
+            let songID: UUID
+            if let existing = catalog.songs.first(where: {
+                $0.title.caseInsensitiveCompare(title) == .orderedSame
+            }) {
+                songID = existing.id
+            } else {
+                let song = ImportService.makeSong(title: title)
+                catalog.songs.append(song)
+                persist(song)
+                songID = song.id
+                record(songID: songID, target: .song, operation: .imported,
+                       summary: "\(title) detected in watched folder (observed).", confidence: 0.8)
+            }
+
+            asset.songID = songID
+            catalog.assets.append(asset)
+            do { try store.insert(asset: asset) }
+            catch { logger.error("Failed to persist observed asset: \(error.localizedDescription)") }
+            record(songID: songID, target: target(forRole: asset.role),
+                   operation: .imported, after: asset.id,
+                   summary: "\(asset.originalFilename) appeared in watched folder (observed).",
+                   confidence: 0.8)
+        }
     }
 
     // MARK: - Persistence helpers

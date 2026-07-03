@@ -54,6 +54,9 @@ struct InspectorView: View {
                 }
             }
 
+            WaveformView(asset: asset)
+                .frame(height: 36)
+
             if audio.playingAssetID == asset.id, audio.duration > 0 {
                 VStack(alignment: .leading, spacing: 3) {
                     AOSProgressBar(value: audio.currentTime / audio.duration)

@@ -80,6 +80,8 @@ struct AssetGridView: View {
                                 PlayButton(asset: asset)
                                 Text(asset.title).font(.headline.weight(.bold)).lineLimit(1)
                             }
+                            WaveformView(asset: asset)
+                                .frame(height: 26)
                             Text(asset.originalFilename).font(.caption).foregroundStyle(AOSTheme.muted).lineLimit(2)
                             HStack(spacing: 6) {
                                 AOSBadge(text: asset.role.rawValue, tint: AOSTheme.blue)
@@ -93,6 +95,8 @@ struct AssetGridView: View {
                         .aosPanel(cornerRadius: 16)
                     }
                     .buttonStyle(.plain)
+                    .draggable(asset.id.uuidString)
+                    .help("Drag onto a master slot to assign")
                 }
             }
         }

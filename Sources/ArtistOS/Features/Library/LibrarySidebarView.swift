@@ -7,6 +7,7 @@ struct LibrarySidebarView: View {
         VStack(alignment: .leading, spacing: 18) {
             artistHeader
             navigation
+            watchedFoldersSection
             Spacer()
             importCard
         }
@@ -51,6 +52,42 @@ struct LibrarySidebarView: View {
                     .background(state.selectedNavigation == item ? Color.white.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var watchedFoldersSection: some View {
+        if !state.watchedFolders.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Watching")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(AOSTheme.muted)
+                    .textCase(.uppercase)
+                ForEach(state.watchedFolders) { folder in
+                    HStack(spacing: 8) {
+                        Image(systemName: "eye")
+                            .font(.caption)
+                            .foregroundStyle(AOSTheme.green)
+                        Text(folder.displayName)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .help(folder.path)
+                        Spacer()
+                        Button {
+                            state.removeWatchedFolder(id: folder.id)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(AOSTheme.muted)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop watching this folder")
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .aosPanel(cornerRadius: 10)
+                }
             }
         }
     }

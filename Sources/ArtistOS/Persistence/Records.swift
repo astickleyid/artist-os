@@ -90,6 +90,7 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
     var format: String?
     var sampleRate: Double?
     var channels: Int?
+    var contentHash: String?
 
     init(_ asset: Asset) {
         id = asset.id
@@ -105,6 +106,7 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
         format = asset.format
         sampleRate = asset.sampleRate
         channels = asset.channels
+        contentHash = asset.contentHash
     }
 
     func toDomain() -> Asset {
@@ -121,8 +123,28 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
             fileSize: fileSize,
             format: format,
             sampleRate: sampleRate,
-            channels: channels
+            channels: channels,
+            contentHash: contentHash
         )
+    }
+}
+
+struct WatchedFolderRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "watchedFolder"
+    var id: UUID
+    var path: String
+    var bookmark: Data?
+    var addedAt: Date
+
+    init(_ folder: WatchedFolder) {
+        id = folder.id
+        path = folder.path
+        bookmark = folder.bookmark
+        addedAt = folder.addedAt
+    }
+
+    func toDomain() -> WatchedFolder {
+        WatchedFolder(id: id, path: path, bookmark: bookmark, addedAt: addedAt)
     }
 }
 
