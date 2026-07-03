@@ -54,8 +54,28 @@ struct InspectorView: View {
                 }
             }
 
-            WaveformView(asset: asset)
-                .frame(height: 36)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    WaveformView(asset: asset)
+                    if audio.playingAssetID == asset.id, audio.duration > 0 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.9))
+                            .frame(width: 1.5)
+                            .offset(x: geo.size.width * min(1, audio.currentTime / audio.duration))
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard geo.size.width > 0 else { return }
+                            audio.seek(asset: asset, toFraction: value.location.x / geo.size.width)
+                        }
+                )
+                .allowsHitTesting(audio.canPlay(asset))
+            }
+            .frame(height: 36)
+            .help("Click or drag to scrub")
 
             if audio.playingAssetID == asset.id, audio.duration > 0 {
                 VStack(alignment: .leading, spacing: 3) {

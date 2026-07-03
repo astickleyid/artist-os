@@ -143,6 +143,13 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// A/B decision outcome: assigns the winning asset and locks the slot,
+    /// producing Source Selected + Approved events in the change log.
+    func resolveDecision(sectionID: UUID, songID: UUID, winner: UUID) {
+        assign(assetID: winner, sectionID: sectionID, songID: songID)
+        setState(.locked, sectionID: sectionID, songID: songID)
+    }
+
     func updateNote(_ note: String, sectionID: UUID, songID: UUID) {
         guard let si = songIndex(songID),
               let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })

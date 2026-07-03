@@ -29,7 +29,7 @@ final class AudioPreviewService: ObservableObject {
         play(asset: asset)
     }
 
-    func play(asset: Asset) {
+    func play(asset: Asset, from startTime: Double = 0) {
         stop()
         guard let url = AssetFileResolver.url(for: asset) else {
             logger.error("No playable source for asset \(asset.originalFilename)")
@@ -71,8 +71,40 @@ final class AudioPreviewService: ObservableObject {
             }
         }
 
+        if startTime > 0 {
+            let target = CMTime(seconds: startTime, preferredTimescale: 600)
+            newPlayer.seek(to: target)
+            currentTime = startTime
+        }
+
         newPlayer.play()
         isPlaying = true
+    }
+
+    /// Scrub to a 0...1 position. Starts playback from that point if this
+    /// asset isn't already the active preview.
+    func seek(asset: Asset, toFraction fraction: Double) {
+        let clamped = min(max(fraction, 0), 1)
+        if playingAssetID == asset.id {
+            let total = duration > 0 ? duration : (asset.duration ?? 0)
+            guard total > 0 else { return }
+            let target = clamped * total
+            player?.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+            currentTime = target
+            if !isPlaying { resume() }
+        } else {
+            play(asset: asset, from: clamped * (asset.duration ?? 0))
+        }
+    }
+
+    /// A/B comparison switch: swap the source while holding the playhead
+    /// position, so candidates are judged at the same moment in the song.
+    func switchPreview(to asset: Asset) {
+        guard playingAssetID != asset.id else { return }
+        let position = currentTime
+        let wasPlaying = isPlaying
+        play(asset: asset, from: position)
+        if !wasPlaying { pause() }
     }
 
     func pause() {

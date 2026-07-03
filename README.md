@@ -25,6 +25,8 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 - **Duplicate detection** — SHA-256 content hashing skips files already in the catalog; imports are cancellable mid-scan
 - **Waveform rendering** — downsampled peak waveforms on asset cards and in the inspector
 - **Drag-and-drop assignment** — drag any asset card onto a master slot; slots also reorder via Move Up/Down
+- **A/B decision mode** — compare two candidates for any slot with playhead-preserving source switching (A/B keys), then commit the winner to lock the slot
+- **Waveform scrubbing** — click or drag the inspector waveform to seek, with a live playhead
 - **Global Timeline and Assets views** — catalog-wide change feed and searchable asset browser from the sidebar
 - Rich asset inspector with playback scrubline and Reveal in Finder
 - Sanitized local-only data model; no unreleased audio committed
@@ -60,7 +62,6 @@ Catalog database lives at `~/Library/Application Support/ArtistOS/catalog.sqlite
 
 ## Next build targets
 
-1. Waveform scrubbing (click-to-seek on the inspector waveform).
-2. A/B comparison mode for Needs Decision slots.
-3. Creative DNA analytics once observed history accumulates.
-4. Cloud sync + iPhone companion capture app (deferred per MVP spec).
+1. Creative DNA analytics once observed history accumulates.
+2. Blind A/B mode (hidden labels) for unbiased decisions.
+3. Cloud sync + iPhone companion capture app (deferred per MVP spec).

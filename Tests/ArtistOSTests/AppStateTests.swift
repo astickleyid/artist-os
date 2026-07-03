@@ -71,3 +71,28 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.catalog.events.last?.operation, .structureUpdated)
     }
 }
+
+extension AppStateTests {
+    func testResolveDecisionAssignsAndLocks() throws {
+        let state = AppState(
+            store: CatalogStore(database: try AppDatabase.inMemory()),
+            seedIfNeeded: false, enableWatching: false
+        )
+        state.createSong(title: "Decision Test")
+        let song = state.catalog.songs[0]
+        let winner = Asset(id: UUID(), title: "Hook v2", originalFilename: "hook2.wav",
+                           role: .hook, createdAt: Date(), duration: nil,
+                           localURLBookmark: nil, songID: song.id)
+        state.catalog.assets.append(winner)
+        let sectionID = song.sections[2].id // Hook slot
+
+        state.resolveDecision(sectionID: sectionID, songID: song.id, winner: winner.id)
+
+        let section = state.catalog.songs[0].sections[2]
+        XCTAssertEqual(section.assetID, winner.id)
+        XCTAssertEqual(section.state, .locked)
+        XCTAssertEqual(state.catalog.songs[0].progress, 0.2, accuracy: 0.001)
+        let operations = state.catalog.events.suffix(2).map(\.operation)
+        XCTAssertEqual(operations, [.sourceSelected, .approved])
+    }
+}

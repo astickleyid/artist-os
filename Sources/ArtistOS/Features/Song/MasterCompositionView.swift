@@ -54,6 +54,7 @@ struct MasterSectionRow: View {
     @State private var isEditingNote = false
     @State private var noteDraft = ""
     @State private var isDropTargeted = false
+    @State private var isComparing = false
 
     private var asset: Asset? { state.asset(id: section.assetID) }
 
@@ -95,6 +96,17 @@ struct MasterSectionRow: View {
 
             Spacer()
 
+            if section.state == .needsDecision {
+                Button {
+                    isComparing = true
+                } label: {
+                    Image(systemName: "scale.3d")
+                        .foregroundStyle(AOSTheme.gold)
+                }
+                .buttonStyle(.plain)
+                .help("Compare candidates and resolve this decision")
+            }
+
             VStack(alignment: .trailing, spacing: 7) {
                 AOSBadge(text: section.state.rawValue, tint: tint)
                 AOSProgressBar(value: section.confidence)
@@ -123,6 +135,9 @@ struct MasterSectionRow: View {
         .sheet(isPresented: $isEditingNote) {
             noteEditor
         }
+        .sheet(isPresented: $isComparing) {
+            CompareSheet(song: song, section: section)
+        }
     }
 
     private var sectionMenu: some View {
@@ -148,6 +163,9 @@ struct MasterSectionRow: View {
             Button("Edit Note…") {
                 noteDraft = section.note
                 isEditingNote = true
+            }
+            Button("Compare Candidates…") {
+                isComparing = true
             }
             Divider()
             Button("Move Up") {
