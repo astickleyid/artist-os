@@ -58,25 +58,42 @@ struct AssetGridView: View {
     let song: Song
 
     var assets: [Asset] {
-        song.sections.compactMap { state.asset(id: $0.assetID) }
+        let owned = state.assets(for: song.id)
+        if !owned.isEmpty { return owned }
+        return song.sections.compactMap { state.asset(id: $0.assetID) }
     }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
-            ForEach(assets) { asset in
-                Button {
-                    state.selectedAssetID = asset.id
-                } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(asset.title).font(.headline.weight(.bold))
-                        Text(asset.originalFilename).font(.caption).foregroundStyle(AOSTheme.muted).lineLimit(2)
-                        AOSBadge(text: asset.role.rawValue, tint: AOSTheme.blue)
+        if assets.isEmpty {
+            Text("No assets yet. Import a folder to attach recordings, beats, and mixes to this song.")
+                .font(.caption)
+                .foregroundStyle(AOSTheme.muted)
+                .padding(14)
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
+                ForEach(assets) { asset in
+                    Button {
+                        state.selectedAssetID = asset.id
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                PlayButton(asset: asset)
+                                Text(asset.title).font(.headline.weight(.bold)).lineLimit(1)
+                            }
+                            Text(asset.originalFilename).font(.caption).foregroundStyle(AOSTheme.muted).lineLimit(2)
+                            HStack(spacing: 6) {
+                                AOSBadge(text: asset.role.rawValue, tint: AOSTheme.blue)
+                                if let format = asset.format, !format.isEmpty {
+                                    AOSBadge(text: format, tint: AOSTheme.muted)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .aosPanel(cornerRadius: 16)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .aosPanel(cornerRadius: 16)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }

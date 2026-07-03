@@ -2,12 +2,12 @@ import Foundation
 
 enum MockCatalog {
     static func make() -> ArtistCatalog {
-        let beat = Asset(id: UUID(), title: "Beat is M9", originalFilename: "beat is m9.m4a", role: .beat, createdAt: Date(), duration: 199, localURLBookmark: nil)
-        let soda = Asset(id: UUID(), title: "Soda7draft", originalFilename: "soda7draft.m4a", role: .leadVocal, createdAt: Date(), duration: 252, localURLBookmark: nil)
-        let baddest = Asset(id: UUID(), title: "Baddest Times", originalFilename: "baddest times(1).m4a", role: .hook, createdAt: Date(), duration: 210, localURLBookmark: nil)
-        let candid = Asset(id: UUID(), title: "Candid Camera", originalFilename: "candidcamera(apple master)_1.m4a", role: .bridge, createdAt: Date(), duration: 258, localURLBookmark: nil)
-
         let songID = UUID()
+        let beat = Asset(id: UUID(), title: "Beat is M9", originalFilename: "beat is m9.m4a", role: .beat, createdAt: Date(), duration: 199, localURLBookmark: nil, songID: songID)
+        let soda = Asset(id: UUID(), title: "Soda7draft", originalFilename: "soda7draft.m4a", role: .leadVocal, createdAt: Date(), duration: 252, localURLBookmark: nil, songID: songID)
+        let baddest = Asset(id: UUID(), title: "Baddest Times", originalFilename: "baddest times(1).m4a", role: .hook, createdAt: Date(), duration: 210, localURLBookmark: nil, songID: songID)
+        let candid = Asset(id: UUID(), title: "Candid Camera", originalFilename: "candidcamera(apple master)_1.m4a", role: .bridge, createdAt: Date(), duration: 258, localURLBookmark: nil, songID: songID)
+
         let song = Song(
             id: songID,
             title: "Golden State",

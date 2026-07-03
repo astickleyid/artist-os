@@ -1,6 +1,9 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ArtistOSShellView: View {
+    @EnvironmentObject private var state: AppState
+
     var body: some View {
         NavigationSplitView {
             LibrarySidebarView()
@@ -23,6 +26,20 @@ struct ArtistOSShellView: View {
         }
         .preferredColorScheme(.dark)
         .tint(AOSTheme.gold)
+        .fileImporter(
+            isPresented: $state.isImportPresented,
+            allowedContentTypes: [.folder]
+        ) { result in
+            if case .success(let url) = result {
+                state.importFolder(url: url)
+            }
+        }
+        .sheet(item: $state.importProgress) { _ in
+            ImportProgressSheet()
+        }
+        .sheet(isPresented: $state.isLogChangePresented) {
+            LogChangeSheet()
+        }
     }
 }
 

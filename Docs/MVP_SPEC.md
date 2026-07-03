@@ -29,6 +29,10 @@ Operations: Imported, Source Selected, Candidate Added, Recording Updated, Proce
 - Collaboration.
 - Predictive career modeling.
 
+## Status
+
+Folder import, GRDB persistence, audio preview, editable master slots, and event logging are implemented.
+
 ## Next implementation step
 
-Replace mock catalog with local folder import and persistent SQLite/GRDB storage.
+Filesystem watcher for observed-change detection, so events are generated from real file activity instead of manual entry.

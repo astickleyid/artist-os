@@ -15,11 +15,12 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 - Library sidebar
 - Song list column
 - Song workspace detail
-- Current Master Composition board
-- Creative Change Log
-- Inspector panel
-- Command/search bar
-- Mock catalog model
+- **Persistent SQLite catalog (GRDB)** — songs, sections, assets, and events survive relaunch
+- **Local folder import** — recursive scan, subfolder→song grouping, role inference, audio metadata (duration, sample rate, channels, size) via AVFoundation
+- **Native audio preview** — single-active-player AVPlayer previews from master slots, asset grid, and inspector
+- **Editable Master Composition** — assign assets to slots, set states, edit notes, add/remove slots; progress and risk recompute automatically
+- **Creative event logging** — automatic events for imports and master edits, plus manual Log Change entry (⌘⇧L)
+- Rich asset inspector with playback scrubline and Reveal in Finder
 - Sanitized local-only data model; no unreleased audio committed
 
 ## Run
@@ -47,11 +48,15 @@ Sources/ArtistOS/
 └── Services/
 ```
 
+## Data
+
+Catalog database lives at `~/Library/Application Support/ArtistOS/catalog.sqlite`. First launch seeds a demo song; imports add real data alongside it.
+
 ## Next build targets
 
-1. Local folder import flow.
-2. Persistent SQLite/GRDB catalog.
-3. Native audio preview using AVFoundation.
-4. Asset hover/inspector metadata.
-5. Editable Master Composition slots.
-6. Event creation and observed-change logging.
+1. Import cancellation + duplicate-file detection (hash-based).
+2. Waveform rendering in asset rows.
+3. Drag-and-drop asset assignment onto master slots.
+4. Section reordering in the Master Composition board.
+5. Filesystem watcher for observed-change detection (auto events).
+6. Timeline and Assets navigation views (sidebar items currently inert).

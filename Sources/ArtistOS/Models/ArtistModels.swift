@@ -51,6 +51,12 @@ struct Asset: Identifiable, Codable, Equatable {
     var createdAt: Date
     var duration: TimeInterval?
     var localURLBookmark: Data?
+    var songID: UUID? = nil
+    var sourcePath: String? = nil
+    var fileSize: Int64? = nil
+    var format: String? = nil
+    var sampleRate: Double? = nil
+    var channels: Int? = nil
 }
 
 enum AssetRole: String, Codable, CaseIterable {

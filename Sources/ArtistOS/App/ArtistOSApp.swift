@@ -8,6 +8,7 @@ struct ArtistOSApp: App {
         WindowGroup {
             ArtistOSShellView()
                 .environmentObject(state)
+                .environmentObject(state.audio)
                 .frame(minWidth: 1180, minHeight: 760)
         }
         .windowStyle(.hiddenTitleBar)
@@ -17,6 +18,10 @@ struct ArtistOSApp: App {
                     state.isImportPresented = true
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+                Button("Log Change…") {
+                    state.isLogChangePresented = true
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
             }
         }
     }
