@@ -101,6 +101,12 @@ struct InspectorView: View {
                 if let sampleRate = asset.sampleRate {
                     metadataRow("Sample Rate", String(format: "%.1f kHz", sampleRate / 1000))
                 }
+                if let bpm = asset.bpm {
+                    metadataRow("Tempo", "\(Int(bpm.rounded())) BPM")
+                }
+                if let key = asset.musicalKey {
+                    metadataRow("Key", key)
+                }
                 if let channels = asset.channels {
                     metadataRow("Channels", channels == 1 ? "Mono" : channels == 2 ? "Stereo" : "\(channels)")
                 }

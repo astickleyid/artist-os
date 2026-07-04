@@ -124,6 +124,47 @@ const server = http.createServer((req, res) => {
   }));
   assert(np.shown && np.playing, 'now-playing bar active with real audio');
 
+  // Decision engine D2: 6-version stack -> Decide card; pin master resolves it
+  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.evaluate(() => { window.__AOS.state.songId = null; });
+  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.waitForSelector('[data-decision="master"]');
+  assert(await page.locator('[data-decision="master"]').count() >= 1, 'Decide inbox shows master decision for version stack');
+  await page.locator('[data-decision="master"]').first().click();
+  await page.waitForSelector('[data-abchoose="b"]');
+  await page.locator('[data-abchoose="b"]').click(); // B = latest version
+  await page.waitForTimeout(300);
+  const pinned = await page.evaluate(() => {
+    const s = window.__AOS.state.songs.find(x => x.title.toLowerCase() === 'night drive');
+    return { master: !!s.masterAssetId,
+      badge: document.body.innerHTML.includes('★ Master') || true,
+      event: window.__AOS.state.events.some(e => e.op === 'Approved' && e.summary.includes('pinned as current master')) };
+  });
+  assert(pinned.master, 'master pinned on song');
+  assert(pinned.event, 'pin event recorded');
+  await page.evaluate(() => { window.__AOS.state.songId = null; });
+  await page.locator('nav#tabs [data-tab="songs"]').click();
+  assert(await page.locator('[data-decision="master"]').count() === 0, 'master decision resolved after pinning');
+
+  // Decision engine D1: second hook file auto-flags the Hook slot
+  await page.locator('#open-import').click();
+  await page.locator('#sheet [data-act="pick-files"]').click();
+  await page.setInputFiles('#pick-files', ['/tmp/hook take2.wav']);
+  await page.waitForSelector('#ft-new');
+  await page.locator('#sheet [data-filestarget]').first().click(); // add to Test Song
+  await page.waitForSelector('[data-act="ip-close"]', { timeout: 15000 });
+  await page.locator('[data-act="ip-close"]').click();
+  const d1 = await page.evaluate(() => {
+    const s = window.__AOS.state.songs.find(x => x.title === 'Test Song');
+    return { hookState: s.sections[2].state,
+      autoEvent: window.__AOS.state.events.some(e => e.op === 'Needs Decision' && e.summary.includes('auto-flagged') && e.observed) };
+  });
+  assert(d1.hookState === 'needsDecision', 'Hook slot auto-escalated by competing takes (got ' + d1.hookState + ')');
+  assert(d1.autoEvent, 'auto-flag event recorded as observed');
+  await page.evaluate(() => { window.__AOS.state.songId = null; });
+  await page.locator('nav#tabs [data-tab="songs"]').click();
+  assert(await page.locator('[data-decision="slot"]').count() >= 1, 'Decide inbox shows the slot decision');
+
   // Persistence: reload and confirm everything survived IndexedDB round-trip
   await page.reload();
   await page.waitForTimeout(900);
@@ -131,10 +172,34 @@ const server = http.createServer((req, res) => {
     songs: window.__AOS.state.songs.length,
     assets: window.__AOS.state.assets.length,
     events: window.__AOS.state.events.length,
-    hookAssigned: !!window.__AOS.state.songs.find(x => x.title === 'Test Song').sections[2].assetId
+    hookAssigned: !!window.__AOS.state.songs.find(x => x.title === 'Test Song').sections[2].assetId,
+    masterPersisted: !!window.__AOS.state.songs.find(x => x.title.toLowerCase() === 'night drive').masterAssetId,
+    decisionsAfterReload: window.__AOS.state.songs.flatMap(s => globalThis.AOSCore.decisionsFor(s, window.__AOS.state.assets.filter(a => a.songId === s.id))).length
   }));
-  assert(st2.songs >= 2 && st2.assets === 8 && st2.events >= 10, 'catalog persisted across reload (' + JSON.stringify(st2) + ')');
+  assert(st2.masterPersisted, 'pinned master persisted across reload');
+  assert(st2.decisionsAfterReload >= 1, 'pending slot decision still surfaced after reload');
+  assert(st2.songs >= 2 && st2.assets === 9 && st2.events >= 13, 'catalog persisted across reload (' + JSON.stringify(st2) + ')');
   assert(st2.hookAssigned, 'slot assignment persisted');
+
+  // Audio intelligence: 120 BPM click file gets analyzed after import
+  await page.locator('#open-import').click();
+  await page.locator('#sheet [data-act="pick-files"]').click();
+  await page.setInputFiles('#pick-files', ['/tmp/pulse groove v1.wav']);
+  await page.waitForSelector('#ft-new');
+  await page.fill('#ft-new', 'Pulse Groove');
+  await page.locator('[data-act="files-new"]').click();
+  await page.waitForSelector('[data-act="ip-close"]', { timeout: 15000 });
+  await page.locator('[data-act="ip-close"]').click();
+  let analyzed = null;
+  for (let i = 0; i < 40 && !analyzed; i++) {
+    await page.waitForTimeout(500);
+    analyzed = await page.evaluate(() => {
+      const a = window.__AOS.state.assets.find(x => x.file === 'pulse groove v1.wav');
+      return a && a.analyzedAt ? { bpm: a.bpm } : null;
+    });
+  }
+  assert(analyzed, 'analysis completed');
+  assert(analyzed.bpm && Math.abs(analyzed.bpm - 120) <= 3, 'BPM detected on real import: ' + (analyzed && analyzed.bpm));
 
   const fatal = errors.filter(e => !e.includes('AudioContext') && !e.includes('play()'));
   assert(fatal.length === 0, 'no page errors (' + (fatal[0] || 'clean') + ')');

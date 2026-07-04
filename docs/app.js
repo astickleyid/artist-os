@@ -370,6 +370,7 @@ async function importFiles(files, opts = {}) {
     if (vc >= 2) record(sid, "Song", "Imported", `${vc} versions of ${s.title} stacked — latest flagged.`);
   }
   runDecisionEngine([...perSong.keys()]);
+  queueAnalysis(state.assets.filter(a => [...perSong.keys()].includes(a.songId)).map(a => a.id));
 
   state.importing.summary =
     `${added} asset${added === 1 ? "" : "s"} imported · ${newSongs} new song${newSongs === 1 ? "" : "s"} · ` +
@@ -458,6 +459,7 @@ async function reconcile(announce) {
         known.dur = await durationOf(file);
         peakMem.delete(known.id); dbDel("kv", "peaks:" + known.id);
         blobURLs.delete(known.id);
+        known.analyzedAt = null;
         await persistAsset(known);
         record(known.songId, C.targetForRole(known.role), "Recording Updated",
           `${known.file} changed on disk (observed).`, true);
@@ -496,6 +498,7 @@ async function reconcile(announce) {
 
   if (added || changed) {
     runDecisionEngine();
+    queueAnalysis(state.assets.map(a => a.id));
     toast(`Observed: ${added ? added + " new" : ""}${added && changed ? ", " : ""}${changed ? changed + " changed" : ""}`);
     renderAll(false);
   }
@@ -584,6 +587,46 @@ function deleteAsset(id) {
 function resolveDecision(slotId, winnerId) {
   assign(slotId, winnerId);
   setSlotState(slotId, "locked");
+}
+
+/* ---------- audio intelligence: BPM + key (lazy, queued, persisted) ---------- */
+const ANALYZE_SIZE_CAP = 40 * 1024 * 1024;
+let analyzeQueue = [], analyzeBusy = false;
+function queueAnalysis(assetIds) {
+  for (const id of assetIds) {
+    const a = byId(id);
+    if (!a || a.demo || a.analyzedAt || analyzeQueue.includes(id)) continue;
+    analyzeQueue.push(id);
+  }
+  drainAnalysis();
+}
+async function drainAnalysis() {
+  if (analyzeBusy) return;
+  analyzeBusy = true;
+  while (analyzeQueue.length) {
+    const id = analyzeQueue.shift();
+    const a = byId(id);
+    if (!a) continue;
+    try {
+      const rec = await dbGet("blobs", id);
+      if (!rec || !rec.blob || rec.blob.size > ANALYZE_SIZE_CAP) { a.analyzedAt = now(); await persistAsset(a); continue; }
+      if (!decodeCtx) decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const buf = await rec.blob.arrayBuffer();
+      const audio = await decodeCtx.decodeAudioData(buf.slice(0));
+      const result = window.AOSAudio.analyze(audio.getChannelData(0), audio.sampleRate);
+      a.bpm = result.tempo ? result.tempo.bpm : null;
+      a.keyName = result.key ? result.key.name : null;
+      a.analysisConf = Math.max(result.tempo ? result.tempo.confidence : 0, result.key ? result.key.confidence : 0);
+      a.analyzedAt = now();
+      await persistAsset(a);
+      renderAll(false);
+    } catch (e) {
+      a.analyzedAt = now();
+      await persistAsset(a).catch(() => {});
+    }
+    await new Promise(r => setTimeout(r, 60)); // keep the UI thread breathing
+  }
+  analyzeBusy = false;
 }
 
 /* ---------- decision engine ---------- */
@@ -862,7 +905,7 @@ function renderAssetCards(list, withSong) {
         <button class="play" data-play="${a.id}" aria-label="Preview ${esc(a.title)}">${playing && Player.playing() ? "❚❚" : "▶"}</button>
         <div class="grow">
           <div class="row-title" style="font-size:14.5px">${esc(a.title)} ${playing ? eqHtml() : ""}</div>
-          <div class="sub">${C.ROLES[a.role]}${a.dur ? " · " + C.mmss(a.dur) : ""}${a.demo ? " · demo" : ""}${withSong ? " · " + esc(songOf(a)?.title || "") : ""}</div>
+          <div class="sub">${C.ROLES[a.role]}${a.dur ? " · " + C.mmss(a.dur) : ""}${a.bpm ? " · " + Math.round(a.bpm) + " BPM" : ""}${a.keyName ? " · " + esc(a.keyName) : ""}${a.demo ? " · demo" : ""}${withSong ? " · " + esc(songOf(a)?.title || "") : ""}</div>
         </div>
         ${(songOf(a) && songOf(a).masterAssetId === a.id) ? `<span class="badge" style="--tint:var(--gold)">★ Master</span>` : (a.id === latestId ? `<span class="badge" style="--tint:var(--green)">Latest</span>` : (a.version ? `<span class="badge">${esc(a.version)}</span>` : ""))}
         <button class="kebab" data-assetmenu="${a.id}" aria-label="Asset options">⋯</button>
@@ -1089,7 +1132,7 @@ function assetMenuSheet(id) {
   const a = byId(id);
   openSheet(`
     <h3>${esc(a.title)}</h3>
-    <div class="hint mono">${esc(a.file)}${a.size ? " · " + (a.size / 1048576).toFixed(1) + " MB" : ""}${a.sourcePath ? " · " + esc(a.sourcePath) : ""}</div>
+    <div class="hint mono">${esc(a.file)}${a.size ? " · " + (a.size / 1048576).toFixed(1) + " MB" : ""}${a.bpm ? " · " + Math.round(a.bpm) + " BPM" : ""}${a.keyName ? " · " + esc(a.keyName) : ""}${a.sourcePath ? " · " + esc(a.sourcePath) : ""}</div>
     <button class="opt" data-play="${id}"><span class="dot" style="--tint:var(--gold)"></span>Preview</button>
     ${((a.version || a.vOrder != null) && a.role === "fullMix") ? `<button class="opt" data-pinmaster="${id}"><span class="dot" style="--tint:var(--gold)"></span>Set as current master</button>` : ""}
     <button class="opt" data-act="confirm-del-asset" data-ref="${id}"><span class="dot" style="--tint:var(--red)"></span><span style="color:var(--red)">Remove from library…</span></button>`);
@@ -1233,6 +1276,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
   await restoreFolder().catch(() => {});
   runDecisionEngine();
   renderAll();
+  queueAnalysis(state.assets.map(a => a.id));
 })();
 
 /* exposed for automated tests */

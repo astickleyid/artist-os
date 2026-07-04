@@ -62,6 +62,9 @@ struct Asset: Identifiable, Codable, Equatable {
     var fileModifiedAt: Date? = nil
     var version: String? = nil
     var vOrder: Int? = nil
+    var bpm: Double? = nil
+    var musicalKey: String? = nil
+    var analyzedAt: Date? = nil
 }
 
 struct WatchedFolder: Identifiable, Codable, Equatable {

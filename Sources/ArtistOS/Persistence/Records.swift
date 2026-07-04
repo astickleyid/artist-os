@@ -97,6 +97,9 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
     var fileModifiedAt: Date?
     var version: String?
     var vOrder: Int?
+    var bpm: Double?
+    var musicalKey: String?
+    var analyzedAt: Date?
 
     init(_ asset: Asset) {
         id = asset.id
@@ -116,6 +119,9 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
         fileModifiedAt = asset.fileModifiedAt
         version = asset.version
         vOrder = asset.vOrder
+        bpm = asset.bpm
+        musicalKey = asset.musicalKey
+        analyzedAt = asset.analyzedAt
     }
 
     func toDomain() -> Asset {
@@ -136,7 +142,10 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
             contentHash: contentHash,
             fileModifiedAt: fileModifiedAt,
             version: version,
-            vOrder: vOrder
+            vOrder: vOrder,
+            bpm: bpm,
+            musicalKey: musicalKey,
+            analyzedAt: analyzedAt
         )
     }
 }

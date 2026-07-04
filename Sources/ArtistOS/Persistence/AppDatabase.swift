@@ -118,6 +118,14 @@ final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "bpm", .double)
+                t.add(column: "musicalKey", .text)
+                t.add(column: "analyzedAt", .datetime)
+            }
+        }
+
         return migrator
     }
 }

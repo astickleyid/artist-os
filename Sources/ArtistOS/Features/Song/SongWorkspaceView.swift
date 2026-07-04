@@ -116,6 +116,12 @@ struct AssetGridView: View {
                                     AOSBadge(text: version, tint: AOSTheme.muted)
                                 }
                                 AOSBadge(text: asset.role.rawValue, tint: AOSTheme.blue)
+                                if let bpm = asset.bpm {
+                                    AOSBadge(text: "\(Int(bpm.rounded())) BPM", tint: AOSTheme.muted)
+                                }
+                                if let key = asset.musicalKey {
+                                    AOSBadge(text: key, tint: AOSTheme.muted)
+                                }
                                 if let format = asset.format, !format.isEmpty {
                                     AOSBadge(text: format, tint: AOSTheme.muted)
                                 }

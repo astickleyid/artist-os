@@ -43,6 +43,7 @@ final class AppState: ObservableObject {
         selectedSongID = catalog.songs.first?.id
         watchedFolders = store.watchedFolders()
         runDecisionEngine()
+        queueAnalysis()
 
         if enableWatching {
             watchService.onChanges = { [weak self] paths in
@@ -340,8 +341,43 @@ final class AppState: ObservableObject {
             selectedSongID = catalog.songs.first?.id
         }
         runDecisionEngine(songIDs: outcome.songs.map(\.song.id) + catalog.songs.map(\.id))
+        queueAnalysis()
         importProgress?.finishedSummary =
             "\(newAssets) asset\(newAssets == 1 ? "" : "s") imported · \(newSongs) new song\(newSongs == 1 ? "" : "s") · \(duplicates) duplicate\(duplicates == 1 ? "" : "s") skipped · \(outcome.skippedFiles) non-audio file\(outcome.skippedFiles == 1 ? "" : "s") skipped. This folder is now watched for creative activity."
+    }
+
+    // MARK: - Audio intelligence (BPM + key, queued, persisted)
+
+    private var analysisTask: Task<Void, Never>?
+
+    func queueAnalysis() {
+        guard analysisTask == nil else { return }
+        analysisTask = Task { [weak self] in
+            await self?.drainAnalysis()
+            self?.analysisTask = nil
+        }
+    }
+
+    private func drainAnalysis() async {
+        while let index = catalog.assets.firstIndex(where: { $0.analyzedAt == nil && ($0.localURLBookmark != nil || $0.sourcePath != nil) }) {
+            let asset = catalog.assets[index]
+            var updated = asset
+            updated.analyzedAt = Date()
+            if let url = AssetFileResolver.url(for: asset) {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                if let loaded = await AudioAnalysis.loadSamples(url: url) {
+                    let result = AudioAnalysis.analyze(loaded.samples, sampleRate: loaded.sampleRate)
+                    updated.bpm = result.tempo?.bpm
+                    updated.musicalKey = result.key?.name
+                }
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+            }
+            guard let liveIndex = catalog.assets.firstIndex(where: { $0.id == asset.id }) else { continue }
+            catalog.assets[liveIndex] = updated
+            do { try store.insert(asset: updated) }
+            catch { logger.error("Failed to persist analysis: \(error.localizedDescription)") }
+            try? await Task.sleep(nanoseconds: 80_000_000)
+        }
     }
 
     // MARK: - Decision engine (VISION.md: the app proposes, the artist approves)
@@ -597,6 +633,7 @@ final class AppState: ObservableObject {
                summary: "\(asset.originalFilename) appeared in watched folder (observed).",
                confidence: 0.8)
         runDecisionEngine(songIDs: [songID])
+        queueAnalysis()
     }
 
     /// Records a single archived event per asset when its file disappears.
@@ -620,6 +657,7 @@ final class AppState: ObservableObject {
         fresh.title = old.title
         fresh.role = old.role
         fresh.createdAt = old.createdAt
+        fresh.analyzedAt = nil
         catalog.assets[index] = fresh
         do { try store.insert(asset: fresh) }
         catch { logger.error("Failed to refresh asset: \(error.localizedDescription)") }

@@ -90,3 +90,56 @@ console.log(n + ' core test groups passed');
   assert.equal(nd.versions, 3);
   console.log('version intelligence tests passed');
 })();
+
+// ---- decision engine ----
+(function(){
+  const C = globalThis.AOSCore;
+  const assert = require('assert');
+  const slot = (name, state) => ({ id: name, name, state, conf: 0 });
+  const asset = (role, v, o) => ({ id: Math.random()+'', role, version: v, vOrder: o, created: 1, modifiedAt: 1 });
+
+  // D1: two hooks escalate an open Hook slot, exactly once
+  let song = { id:'s', title:'T', sections:[slot('Intro','locked'), slot('Hook','open')], masterAssetId:null };
+  let assets = [asset('hook','v1',1), asset('hook','v2',2)];
+  let fired = C.applyAutoDecisions(song, assets);
+  assert.equal(fired.length, 1);
+  assert.equal(song.sections[1].state, 'needsDecision');
+  assert.equal(C.applyAutoDecisions(song, assets).length, 0); // idempotent
+  // locked slots never touched
+  song.sections[1].state = 'locked';
+  assert.equal(C.applyAutoDecisions(song, assets).length, 0);
+
+  // one hook only -> nothing
+  song = { id:'s', title:'T', sections:[slot('Hook','open')], masterAssetId:null };
+  assert.equal(C.applyAutoDecisions(song, [asset('hook','v1',1)]).length, 0);
+
+  // D2: two versions, no master -> pending; pin latest -> resolved
+  const v1 = asset('fullMix','v1',1), v2 = asset('fullMix','v2',2);
+  song = { id:'s', title:'T', sections:[], masterAssetId:null };
+  let d = C.decisionsFor(song, [v1, v2]);
+  assert.equal(d.length, 1); assert.equal(d[0].kind, 'master');
+  song.masterAssetId = v2.id;
+  assert.equal(C.decisionsFor(song, [v1, v2]).length, 0);
+  // newer version challenges pinned older master
+  song.masterAssetId = v1.id;
+  d = C.decisionsFor(song, [v1, v2]);
+  assert.equal(d.length, 1);
+  assert(d[0].detail.includes('challenges'));
+
+  // stack ordering: vOrder desc, then modified
+  const s = C.versionStack([asset('fullMix','v1',1), asset('fullMix','final',null), asset('fullMix','v3',3)]);
+  assert.equal(s[0].version, 'v3');
+  console.log('decision engine tests passed');
+})();
+
+// master stack requires fullMix role
+(function(){
+  const C = globalThis.AOSCore; const assert = require('assert');
+  const a = (role, v, o) => ({ id: role+v, role, version: v, vOrder: o, created: 1, modifiedAt: 1 });
+  const song = { id:'s', title:'T', sections:[], masterAssetId:null };
+  // hook + beat "versions" are NOT a master decision
+  assert.equal(C.decisionsFor(song, [a('hook','take1',1), a('beat','v1',1)]).length, 0);
+  // two full mixes ARE
+  assert.equal(C.decisionsFor(song, [a('fullMix','v1',1), a('fullMix','v2',2)]).length, 1);
+  console.log('master-stack role gating passed');
+})();
