@@ -26,6 +26,8 @@ Artist OS organizes **songs**, not files. The artist works from one living song 
 - **Waveform rendering** — downsampled peak waveforms on asset cards and in the inspector
 - **Drag-and-drop assignment** — drag any asset card onto a master slot; slots also reorder via Move Up/Down
 - **A/B decision mode** — compare two candidates for any slot with playhead-preserving source switching (A/B keys), then commit the winner to lock the slot
+- **Decision engine** — the app proposes, you approve: competing hook/bridge/vocal takes auto-flag their slot as Needs Decision; full-mix version stacks demand a pinned ★ master, and newer versions reopen the question — all surfaced in a Decide inbox (both platforms, one canonical spec in Docs/VISION.md)
+- **Version stacks (native parity)** — filename intelligence ports to macOS: canonical titles, version labels/order, Latest/★ Master badges, Compare Versions, and a Catalog ▸ Re-analyze Filenames command for existing libraries
 - **Waveform scrubbing** — click or drag the inspector waveform to seek, with a live playhead
 - **Global Timeline and Assets views** — catalog-wide change feed and searchable asset browser from the sidebar
 - Rich asset inspector with playback scrubline and Reveal in Finder

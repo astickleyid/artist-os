@@ -22,6 +22,9 @@ struct ArtistOSApp: App {
                     state.isLogChangePresented = true
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+                Button("Re-analyze Filenames") {
+                    state.reanalyzeCatalog()
+                }
             }
         }
     }

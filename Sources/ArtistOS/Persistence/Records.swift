@@ -13,6 +13,7 @@ struct SongRecord: Codable, FetchableRecord, PersistableRecord {
     var progress: Double
     var qualityScore: Double
     var risk: String
+    var masterAssetID: UUID?
 
     init(_ song: Song) {
         id = song.id
@@ -22,6 +23,7 @@ struct SongRecord: Codable, FetchableRecord, PersistableRecord {
         progress = song.progress
         qualityScore = song.qualityScore
         risk = song.risk
+        masterAssetID = song.masterAssetID
     }
 
     func toDomain(sections: [MasterSection]) -> Song {
@@ -33,7 +35,8 @@ struct SongRecord: Codable, FetchableRecord, PersistableRecord {
             progress: progress,
             qualityScore: qualityScore,
             risk: risk,
-            sections: sections
+            sections: sections,
+            masterAssetID: masterAssetID
         )
     }
 }
@@ -92,6 +95,8 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
     var channels: Int?
     var contentHash: String?
     var fileModifiedAt: Date?
+    var version: String?
+    var vOrder: Int?
 
     init(_ asset: Asset) {
         id = asset.id
@@ -109,6 +114,8 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
         channels = asset.channels
         contentHash = asset.contentHash
         fileModifiedAt = asset.fileModifiedAt
+        version = asset.version
+        vOrder = asset.vOrder
     }
 
     func toDomain() -> Asset {
@@ -127,7 +134,9 @@ struct AssetRecord: Codable, FetchableRecord, PersistableRecord {
             sampleRate: sampleRate,
             channels: channels,
             contentHash: contentHash,
-            fileModifiedAt: fileModifiedAt
+            fileModifiedAt: fileModifiedAt,
+            version: version,
+            vOrder: vOrder
         )
     }
 }

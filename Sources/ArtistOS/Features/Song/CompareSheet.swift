@@ -9,21 +9,26 @@ struct CompareSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let song: Song
-    let section: MasterSection
+    let section: MasterSection?
 
     @State private var assetAID: UUID?
     @State private var assetBID: UUID?
 
-    private var candidates: [Asset] { state.assets(for: song.id) }
+    private var isMasterMode: Bool { section == nil }
+    private var candidates: [Asset] {
+        isMasterMode ? state.masterStack(for: song.id) : state.assets(for: song.id)
+    }
     private var assetA: Asset? { state.asset(id: assetAID) }
     private var assetB: Asset? { state.asset(id: assetBID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Compare — \(section.name)")
+                Text(isMasterMode ? "Current master — \(song.title)" : "Compare — \(section?.name ?? "")")
                     .font(.title3.weight(.black))
-                Text("Switch sources without losing the playhead. Choose a side to lock the slot.")
+                Text(isMasterMode
+                     ? "Compare any two versions at the same playhead. Pinning marks the song's source of truth."
+                     : "Switch sources without losing the playhead. Choose a side to lock the slot.")
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
             }
@@ -46,12 +51,12 @@ struct CompareSheet: View {
                 Button("Keep Undecided") { close() }
                 Spacer()
                 if let assetA {
-                    Button("Choose A") { choose(assetA) }
+                    Button(isMasterMode ? "Pin A as Master" : "Choose A") { choose(assetA) }
                         .buttonStyle(.borderedProminent)
                         .tint(AOSTheme.gold)
                 }
                 if let assetB {
-                    Button("Choose B") { choose(assetB) }
+                    Button(isMasterMode ? "Pin B as Master" : "Choose B") { choose(assetB) }
                         .buttonStyle(.borderedProminent)
                         .tint(AOSTheme.blue)
                 }
@@ -131,12 +136,22 @@ struct CompareSheet: View {
 
     private func seedDefaults() {
         let ids = candidates.map(\.id)
-        assetAID = section.assetID ?? ids.first
-        assetBID = ids.first { $0 != assetAID } ?? ids.dropFirst().first
+        if isMasterMode {
+            assetBID = ids.first // latest
+            assetAID = (song.masterAssetID.flatMap { m in ids.contains(m) ? m : nil })
+                ?? ids.first { $0 != assetBID } ?? ids.first
+        } else {
+            assetAID = section?.assetID ?? ids.first
+            assetBID = ids.first { $0 != assetAID } ?? ids.dropFirst().first
+        }
     }
 
     private func choose(_ winner: Asset) {
-        state.resolveDecision(sectionID: section.id, songID: song.id, winner: winner.id)
+        if isMasterMode {
+            state.pinMaster(songID: song.id, assetID: winner.id)
+        } else if let section {
+            state.resolveDecision(sectionID: section.id, songID: song.id, winner: winner.id)
+        }
         close()
     }
 

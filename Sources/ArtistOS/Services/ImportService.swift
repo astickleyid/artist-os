@@ -123,15 +123,19 @@ enum ImportService {
 
         for entry in audioFiles {
             try Task.checkCancellation()
-            if songsByGroup[entry.group] == nil {
-                songsByGroup[entry.group] = ImportedSong(
-                    song: makeSong(title: titleize(entry.group, stripExtension: false)),
-                    assets: []
-                )
+            // Loose files (grouped under the root) cluster by canonical song
+            // title instead of the folder name — matches docs/core.js.
+            let isLoose = entry.group == base.lastPathComponent
+            let title = isLoose
+                ? VersionIntelligence.parse(entry.url.lastPathComponent).canonical
+                : titleize(entry.group, stripExtension: false)
+            let key = title.lowercased()
+            if songsByGroup[key] == nil {
+                songsByGroup[key] = ImportedSong(song: makeSong(title: title), assets: [])
             }
-            let songID = songsByGroup[entry.group]!.song.id
+            let songID = songsByGroup[key]!.song.id
             let asset = await makeAsset(url: entry.url, songID: songID)
-            songsByGroup[entry.group]!.assets.append(asset)
+            songsByGroup[key]!.assets.append(asset)
             processed += 1
             progress(processed, total)
         }
@@ -233,6 +237,7 @@ enum ImportService {
         }
 
         let hash = contentHash(of: url)
+        let parsed = VersionIntelligence.parse(url.lastPathComponent)
 
         let bookmark = try? url.bookmarkData(
             options: [.withSecurityScope],
@@ -255,7 +260,9 @@ enum ImportService {
             sampleRate: sampleRate,
             channels: channels,
             contentHash: hash,
-            fileModifiedAt: values?.contentModificationDate
+            fileModifiedAt: values?.contentModificationDate,
+            version: parsed.label,
+            vOrder: parsed.order
         )
     }
 }

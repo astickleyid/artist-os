@@ -108,6 +108,16 @@ final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v4") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "version", .text)
+                t.add(column: "vOrder", .integer)
+            }
+            try db.alter(table: "song") { t in
+                t.add(column: "masterAssetID", .text)
+            }
+        }
+
         return migrator
     }
 }

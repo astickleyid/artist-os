@@ -42,6 +42,7 @@ final class AppState: ObservableObject {
         self.catalog = store.loadCatalog(artistName: "STICK")
         selectedSongID = catalog.songs.first?.id
         watchedFolders = store.watchedFolders()
+        runDecisionEngine()
 
         if enableWatching {
             watchService.onChanges = { [weak self] paths in
@@ -71,9 +72,15 @@ final class AppState: ObservableObject {
     }
 
     func assets(for songID: UUID) -> [Asset] {
-        catalog.assets
-            .filter { $0.songID == songID }
-            .sorted { $0.createdAt > $1.createdAt }
+        VersionIntelligence.sortVersions(catalog.assets.filter { $0.songID == songID })
+    }
+
+    func masterStack(for songID: UUID) -> [Asset] {
+        VersionIntelligence.masterStack(catalog.assets.filter { $0.songID == songID })
+    }
+
+    var pendingDecisions: [VersionIntelligence.Decision] {
+        catalog.songs.flatMap { VersionIntelligence.decisions(for: $0, assets: assets(for: $0.id)) }
     }
 
     private func songIndex(_ id: UUID) -> Int? {
@@ -332,8 +339,98 @@ final class AppState: ObservableObject {
         if selectedSongID == nil {
             selectedSongID = catalog.songs.first?.id
         }
+        runDecisionEngine(songIDs: outcome.songs.map(\.song.id) + catalog.songs.map(\.id))
         importProgress?.finishedSummary =
             "\(newAssets) asset\(newAssets == 1 ? "" : "s") imported · \(newSongs) new song\(newSongs == 1 ? "" : "s") · \(duplicates) duplicate\(duplicates == 1 ? "" : "s") skipped · \(outcome.skippedFiles) non-audio file\(outcome.skippedFiles == 1 ? "" : "s") skipped. This folder is now watched for creative activity."
+    }
+
+    // MARK: - Decision engine (VISION.md: the app proposes, the artist approves)
+
+    func runDecisionEngine(songIDs: [UUID]? = nil) {
+        let ids = songIDs ?? catalog.songs.map(\.id)
+        for id in ids {
+            guard let si = songIndex(id) else { continue }
+            let flags = VersionIntelligence.applyAutoDecisions(
+                song: &catalog.songs[si],
+                assets: assets(for: id)
+            )
+            guard !flags.isEmpty else { continue }
+            persistSong(at: si)
+            for flag in flags {
+                record(
+                    songID: id,
+                    target: VersionIntelligence.slotTarget(forSectionName: flag.sectionName),
+                    operation: .needsDecision,
+                    summary: "\(flag.sectionName) auto-flagged: \(flag.count) \(flag.role.rawValue.lowercased()) candidates need a call.",
+                    confidence: 0.8
+                )
+            }
+        }
+    }
+
+    func pinMaster(songID: UUID, assetID: UUID) {
+        guard let si = songIndex(songID),
+              catalog.songs[si].masterAssetID != assetID,
+              let asset = asset(id: assetID)
+        else { return }
+        catalog.songs[si].masterAssetID = assetID
+        persist(catalog.songs[si])
+        let versionText = asset.version.map { " (\($0))" } ?? ""
+        record(songID: songID, target: .song, operation: .approved,
+               summary: "\(asset.title)\(versionText) pinned as current master.")
+    }
+
+    // MARK: - Filename re-analysis (fix catalogs imported before intelligence)
+
+    func reanalyzeCatalog() {
+        var movedCount = 0, taggedCount = 0
+        var touched = Set<UUID>()
+
+        for index in catalog.assets.indices {
+            let asset = catalog.assets[index]
+            let parsed = VersionIntelligence.parse(asset.originalFilename)
+            if asset.version != parsed.label || asset.vOrder != parsed.order {
+                catalog.assets[index].version = parsed.label
+                catalog.assets[index].vOrder = parsed.order
+                taggedCount += 1
+                try? store.insert(asset: catalog.assets[index])
+            }
+            guard let homeID = asset.songID,
+                  let home = catalog.songs.first(where: { $0.id == homeID }),
+                  home.title.caseInsensitiveCompare(parsed.canonical) != .orderedSame,
+                  home.sections.allSatisfy({ $0.assetID != asset.id }) // board-assigned never moves
+            else { continue }
+
+            let targetID: UUID
+            if let existing = catalog.songs.first(where: {
+                $0.title.caseInsensitiveCompare(parsed.canonical) == .orderedSame
+            }) {
+                targetID = existing.id
+            } else {
+                let song = ImportService.makeSong(title: parsed.canonical)
+                catalog.songs.append(song)
+                persist(song)
+                targetID = song.id
+                record(songID: targetID, target: .song, operation: .imported,
+                       summary: "\(song.title) created during filename re-analysis.")
+            }
+            catalog.assets[index].songID = targetID
+            try? store.insert(asset: catalog.assets[index])
+            record(songID: targetID, target: target(forRole: asset.role), operation: .imported,
+                   summary: "\(asset.originalFilename) regrouped into song (re-analysis).")
+            movedCount += 1
+            touched.insert(targetID)
+            touched.insert(homeID)
+        }
+
+        for id in touched {
+            guard let song = catalog.songs.first(where: { $0.id == id }) else { continue }
+            if assets(for: id).isEmpty, song.sections.allSatisfy({ $0.assetID == nil }) {
+                deleteSong(id: id)
+            }
+        }
+        runDecisionEngine()
+        logger.info("Re-analysis: moved \(movedCount), tagged \(taggedCount)")
     }
 
     // MARK: - Watched folders
@@ -499,6 +596,7 @@ final class AppState: ObservableObject {
                operation: .imported, after: asset.id,
                summary: "\(asset.originalFilename) appeared in watched folder (observed).",
                confidence: 0.8)
+        runDecisionEngine(songIDs: [songID])
     }
 
     /// Records a single archived event per asset when its file disappears.

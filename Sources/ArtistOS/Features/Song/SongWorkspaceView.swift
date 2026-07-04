@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SongWorkspaceView: View {
     @EnvironmentObject private var state: AppState
+    @State private var isComparingVersions = false
 
     var body: some View {
         Group {
@@ -48,7 +49,22 @@ struct SongWorkspaceView: View {
                     .foregroundStyle(AOSTheme.muted)
             }
             Spacer()
-            ScoreRing(value: song.qualityScore)
+            VStack(alignment: .trailing, spacing: 10) {
+                ScoreRing(value: song.qualityScore)
+                if state.masterStack(for: song.id).count >= 2 {
+                    Button {
+                        isComparingVersions = true
+                    } label: {
+                        Label("Compare Versions", systemImage: "scale.3d")
+                            .font(.caption.weight(.bold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(AOSTheme.blue)
+                    .sheet(isPresented: $isComparingVersions) {
+                        CompareSheet(song: song, section: nil)
+                    }
+                }
+            }
         }
     }
 }
@@ -91,6 +107,14 @@ struct AssetGridView: View {
                                 .frame(height: 26)
                             Text(asset.originalFilename).font(.caption).foregroundStyle(AOSTheme.muted).lineLimit(2)
                             HStack(spacing: 6) {
+                                if song.masterAssetID == asset.id {
+                                    AOSBadge(text: "★ Master", tint: AOSTheme.gold)
+                                } else if assets.count > 1, assets.first?.id == asset.id,
+                                          asset.version != nil || asset.vOrder != nil {
+                                    AOSBadge(text: "Latest", tint: AOSTheme.green)
+                                } else if let version = asset.version {
+                                    AOSBadge(text: version, tint: AOSTheme.muted)
+                                }
                                 AOSBadge(text: asset.role.rawValue, tint: AOSTheme.blue)
                                 if let format = asset.format, !format.isEmpty {
                                     AOSBadge(text: format, tint: AOSTheme.muted)
