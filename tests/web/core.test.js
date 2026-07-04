@@ -56,3 +56,37 @@ t('time helpers', () => {
   assert.equal(C.agoFrom(1000000, 999999), 'now');
 });
 console.log(n + ' core test groups passed');
+
+// ---- version intelligence ----
+(function(){
+  const C = globalThis.AOSCore;
+  const assert = require('assert');
+  const pv = n => C.parseVersion(n);
+
+  assert.deepEqual(pv('baddest times v1.m4a'), { canonical:'baddest times', label:'v1', order:1 });
+  assert.equal(pv('baddest times v2.m4a').order, 2);
+  assert.deepEqual(pv('baddest times(3).m4a'), { canonical:'baddest times', label:'3', order:3 });
+  assert.equal(pv('baddest times final.m4a').canonical, 'baddest times');
+  assert.equal(pv('baddest times final.m4a').label, 'final');
+  assert.equal(pv('baddest times FINAL final.wav').canonical, 'baddest times');
+  assert.equal(pv('baddest times mix2.wav').order, 2);
+  assert.equal(pv('candidcamera(apple master)_1.m4a').canonical, 'candidcamera');
+  assert.equal(pv('candidcamera(apple master)_1.m4a').order, 1);
+  assert.equal(pv('golden state - master 3.wav').canonical, 'golden state');
+  assert.equal(pv('golden state - master 3.wav').order, 3);
+  // don't over-strip: short/numeric bases keep original
+  assert.equal(pv('0412.m4a').canonical, '0412');
+  assert.equal(pv('v2.wav').canonical, 'v2');
+  // role words are NOT versions
+  assert.equal(pv('golden hook take2.m4a').canonical, 'golden hook');
+
+  const groups = C.clusterByCanonical([
+    'night drive v1.wav','night drive v2.wav','Night Drive final.wav',
+    'other song.wav','0412.m4a'
+  ]);
+  assert.equal(groups.length, 3);
+  const nd = groups.find(g => g.title.toLowerCase() === 'night drive');
+  assert.equal(nd.indices.length, 3);
+  assert.equal(nd.versions, 3);
+  console.log('version intelligence tests passed');
+})();

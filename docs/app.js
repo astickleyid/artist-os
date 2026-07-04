@@ -65,7 +65,13 @@ const state = {
 const song = () => state.songs.find(s => s.id === state.songId);
 const byId = id => state.assets.find(a => a.id === id);
 const songOf = a => state.songs.find(s => s.id === a.songId);
-const assetsFor = id => state.assets.filter(a => a.songId === id).sort((a, b) => b.created - a.created);
+const assetsFor = id => state.assets.filter(a => a.songId === id).sort((a, b) => {
+  const av = a.vOrder != null ? a.vOrder : -1, bv = b.vOrder != null ? b.vOrder : -1;
+  if (av !== bv) return bv - av;
+  if ((a.modifiedAt || 0) !== (b.modifiedAt || 0)) return (b.modifiedAt || 0) - (a.modifiedAt || 0);
+  return b.created - a.created;
+});
+const versionCount = id => state.assets.filter(a => a.songId === id && (a.version || a.vOrder != null)).length;
 const existingHashes = () => new Set(state.assets.map(a => a.hash).filter(Boolean));
 
 async function persistSong(s) { await dbPut("songs", s); }
@@ -312,21 +318,27 @@ async function importFiles(files, opts = {}) {
 
   const seen = existingHashes();
   let added = 0, newSongs = 0, dupes = 0;
+  const perSong = new Map();
 
   for (const f of audioFiles) {
     const hash = await hashFile(f);
     if (hash && seen.has(hash)) { dupes++; state.importing.done++; state.importing.dupes = dupes; updateImportProgress(); continue; }
     if (hash) seen.add(hash);
 
+    const pv = C.parseVersion(f.name);
     let title;
     if (opts.targetSongId) {
       title = state.songs.find(s => s.id === opts.targetSongId)?.title;
     } else if (opts.newSongName) {
       title = opts.newSongName;
+    } else if (opts.smart) {
+      title = pv.canonical;
     } else {
       const rel = f.webkitRelativePath || f.relativePath || "";
       const root = opts.rootName || (rel.split("/")[0] || "Imported");
-      title = C.titleize(C.groupForPath(rel || f.name, root), false);
+      const group = C.groupForPath(rel || f.name, root);
+      // Loose files (no subfolder) group by canonical song title, not folder name.
+      title = group === root ? pv.canonical : C.titleize(group, false);
     }
     const { song: s, created } = ensureSong(title || "Imported");
     if (created) {
@@ -339,6 +351,7 @@ async function importFiles(files, opts = {}) {
       role: C.inferRole(f.name), created: now(), hash,
       size: f.size, type: f.type || "", modifiedAt: f.lastModified || 0,
       sourcePath: opts.pathFor ? opts.pathFor(f) : (f.webkitRelativePath || null),
+      version: pv.label, vOrder: pv.order,
       dur: 0
     };
     await dbPut("blobs", { id: asset.id, blob: f });
@@ -348,7 +361,15 @@ async function importFiles(files, opts = {}) {
     record(s.id, C.targetForRole(asset.role), "Imported",
       `${f.name} ${opts.observed ? "appeared in watched folder (observed)" : "imported"}.`, !!opts.observed);
     added++;
+    perSong.set(s.id, (perSong.get(s.id) || 0) + 1);
     state.importing.done++; state.importing.songs = newSongs; updateImportProgress();
+  }
+
+  for (const [sid, n] of perSong) {
+    if (n < 2) continue;
+    const s = state.songs.find(x => x.id === sid);
+    const vc = versionCount(sid);
+    if (vc >= 2) record(sid, "Song", "Imported", `${vc} versions of ${s.title} stacked — latest flagged.`);
   }
 
   state.importing.summary =
@@ -448,13 +469,15 @@ async function reconcile(announce) {
     const hash = await hashFile(file);
     if (hash && seen.has(hash)) continue;
     if (hash) seen.add(hash);
+    const pv = C.parseVersion(file.name);
     const group = C.groupForPath(root + "/" + path, root);
-    const { song: s, created } = ensureSong(C.titleize(group, false));
+    const { song: s, created } = ensureSong(group === root ? pv.canonical : C.titleize(group, false));
     if (created) record(s.id, "Song", "Imported", `${s.title} detected in watched folder (observed).`, true);
     const asset = {
       id: uid(), songId: s.id, title: C.titleize(file.name), file: file.name,
       role: C.inferRole(file.name), created: now(), hash, size: file.size,
-      type: file.type || "", modifiedAt: file.lastModified || 0, sourcePath: full, dur: 0
+      type: file.type || "", modifiedAt: file.lastModified || 0, sourcePath: full,
+      version: pv.label, vOrder: pv.order, dur: 0
     };
     await dbPut("blobs", { id: asset.id, blob: file });
     asset.dur = await durationOf(file);
@@ -560,6 +583,63 @@ function resolveDecision(slotId, winnerId) {
   setSlotState(slotId, "locked");
 }
 
+/* ---------- re-analysis of existing catalog ---------- */
+function reanalyzePlan() {
+  const moves = [];
+  for (const a of state.assets) {
+    if (a.demo) continue;
+    const pv = C.parseVersion(a.file);
+    const home = songOf(a);
+    const needsVersion = a.version !== pv.label || a.vOrder !== pv.order;
+    const wrongSong = home && home.title.toLowerCase() !== pv.canonical.toLowerCase()
+      && home.sections.every(x => x.assetId !== a.id); // never yank assets already assigned on a board
+    moves.push({ asset: a, pv, move: !!wrongSong, needsVersion });
+  }
+  return moves;
+}
+function reanalyzePreviewSheet() {
+  const plan = reanalyzePlan();
+  const moving = plan.filter(p => p.move).length;
+  const tagging = plan.filter(p => p.needsVersion).length;
+  const targets = new Set(plan.filter(p => p.move).map(p => p.pv.canonical.toLowerCase()));
+  openSheet(`
+    <h3>Re-analyze filenames</h3>
+    <div class="hint">Groups existing assets into songs by canonical title and stacks versions. Assets already placed on a master board stay put.</div>
+    <div class="panel" style="padding:14px;margin-bottom:12px">
+      <div class="row-title" style="font-size:14px">${moving} asset${moving === 1 ? "" : "s"} will move into ${targets.size || 0} song${targets.size === 1 ? "" : "s"}</div>
+      <div class="sub" style="margin-top:4px">${tagging} version label${tagging === 1 ? "" : "s"} will be added or corrected. Songs left empty are removed.</div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn ghost" data-act="close">Cancel</button>
+      <button class="btn gold" data-act="do-reanalyze">Apply</button>
+    </div>`);
+}
+function applyReanalyze() {
+  const plan = reanalyzePlan();
+  let moved = 0, tagged = 0;
+  const touched = new Set();
+  for (const p of plan) {
+    const a = p.asset;
+    if (p.needsVersion) { a.version = p.pv.label; a.vOrder = p.pv.order; tagged++; }
+    if (p.move) {
+      const from = songOf(a);
+      const { song: s, created } = ensureSong(p.pv.canonical);
+      if (created) record(s.id, "Song", "Imported", `${s.title} created during filename re-analysis.`);
+      a.songId = s.id; moved++; touched.add(s.id);
+      record(s.id, C.targetForRole(a.role), "Imported", `${a.file} regrouped into ${s.title} (re-analysis).`);
+      if (from) touched.add(from.id);
+    }
+    persistAsset(a);
+  }
+  for (const id of touched) {
+    const s = state.songs.find(x => x.id === id);
+    if (s && !assetsFor(id).length && s.sections.every(x => !x.assetId)) deleteSong(id);
+    else if (s && versionCount(id) >= 2) record(id, "Song", "Imported", `${versionCount(id)} versions of ${s.title} stacked — latest flagged.`);
+  }
+  closeSheet(); renderAll(false);
+  toast(moved || tagged ? `Reorganized: ${moved} moved, ${tagged} version-tagged` : "Catalog already organized");
+}
+
 /* ============================ demo catalog ============================ */
 function loadDemo() {
   const mkS = (title, era, status) => ({ id: uid(), title, era, status, sections: [], createdAt: now() });
@@ -628,7 +708,7 @@ function songCard(s, compact = false) {
       <div style="display:flex;align-items:flex-start;gap:10px">
         <div style="flex:1;min-width:0">
           <div class="row-title">${esc(s.title)}</div>
-          <div class="sub" style="margin-top:2px">${esc(s.era)} · ${s.sections.length} slots · ${assetsFor(s.id).length} assets</div>
+          <div class="sub" style="margin-top:2px">${esc(s.era)} · ${versionCount(s.id) >= 2 ? versionCount(s.id) + " versions · " : ""}${assetsFor(s.id).length} assets</div>
         </div>
         <span class="badge">${esc(s.status)}</span>
       </div>
@@ -729,7 +809,8 @@ function renderEvents(list, withSong) {
 
 function renderAssetCards(list, withSong) {
   if (!list.length) return `<div class="empty"><div class="big">▦</div><b>No assets yet</b>Import audio to attach recordings and mixes.</div>`;
-  return `<div class="eyebrow">Assets</div>` + list.map(a => {
+  const latestId = !withSong && list.length > 1 && (list[0].version || list[0].vOrder != null) ? list[0].id : null;
+  return `<div class="eyebrow">${!withSong && versionCount(list[0].songId) >= 2 ? "Version Stack" : "Assets"}</div>` + list.map(a => {
     const playing = state.npAsset && state.npAsset.id === a.id;
     return `<div class="asset-card panel" data-asset="${a.id}">
       <div class="hd">
@@ -738,6 +819,7 @@ function renderAssetCards(list, withSong) {
           <div class="row-title" style="font-size:14.5px">${esc(a.title)} ${playing ? eqHtml() : ""}</div>
           <div class="sub">${C.ROLES[a.role]}${a.dur ? " · " + C.mmss(a.dur) : ""}${a.demo ? " · demo" : ""}${withSong ? " · " + esc(songOf(a)?.title || "") : ""}</div>
         </div>
+        ${a.id === latestId ? `<span class="badge" style="--tint:var(--green)">Latest</span>` : (a.version ? `<span class="badge">${esc(a.version)}</span>` : "")}
         <button class="kebab" data-assetmenu="${a.id}" aria-label="Asset options">⋯</button>
       </div>
       <canvas class="wave" data-wave="${a.id}"></canvas>
@@ -754,6 +836,7 @@ function renderSettings() {
     <div class="row-title">Library</div>
     <div class="sub" style="margin:6px 0 14px">${state.songs.length} songs · ${state.assets.length} assets · ${state.events.length} events · ~${mb} MB audio stored locally${memoryMode ? " · <b style='color:var(--gold)'>memory mode (nothing persists)</b>" : ""}</div>
     ${canConnect ? `<button class="btn" data-act="connect" style="width:100%;margin-bottom:9px">${state.watchStatus && state.watchStatus.live ? "Watching “" + esc(state.watchStatus.name) + "” — change folder" : "Connect a folder (auto-watch)"}</button>` : ""}
+    <button class="btn" data-act="reanalyze" style="width:100%;margin-bottom:9px">Re-analyze filenames & regroup</button>
     <button class="btn" data-act="export" style="width:100%;margin-bottom:9px">Export catalog backup (JSON)</button>
     <button class="btn danger" data-act="wipe" style="width:100%">Erase everything on this device…</button>
   </div>
@@ -814,12 +897,23 @@ function importSheet() {
 }
 function filesTargetSheet(files) {
   pendingFiles = files;
+  const groups = C.clusterByCanonical(files.map(f => f.name));
+  const smartLines = groups.map(g => {
+    const t = state.songs.find(s => s.title.toLowerCase() === g.title.toLowerCase());
+    return `<button class="opt" data-act="smart-import">
+      <span class="dot" style="--tint:var(--gold)"></span>${esc(g.title)}
+      <span class="r">${g.indices.length} file${g.indices.length === 1 ? "" : "s"}${g.versions >= 2 ? " · " + g.versions + " versions" : ""}${t ? " · existing" : " · new"}</span>
+    </button>`;
+  }).join("");
   openSheet(`
-    <h3>Where do these go?</h3>
-    <div class="hint">${files.length} audio file${files.length === 1 ? "" : "s"} selected.</div>
-    <input class="field" id="ft-new" placeholder="New song name…" maxlength="60">
-    <button class="btn gold" data-act="files-new" style="width:100%;margin-bottom:12px">Create song & import</button>
-    ${state.songs.length ? `<div class="eyebrow">Or add to an existing song</div>` +
+    <h3>Smart import</h3>
+    <div class="hint">${files.length} file${files.length === 1 ? "" : "s"} → ${groups.length} song${groups.length === 1 ? "" : "s"} detected from filenames. Versions stack automatically.</div>
+    ${smartLines}
+    <button class="btn gold" data-act="smart-import" style="width:100%;margin:6px 0 14px">Import as ${groups.length} song${groups.length === 1 ? "" : "s"}</button>
+    <div class="eyebrow">Or override</div>
+    <input class="field" id="ft-new" placeholder="Put everything in one song…" maxlength="60">
+    <button class="btn" data-act="files-new" style="width:100%;margin-bottom:12px">Import into one song</button>
+    ${state.songs.length ? `<div class="eyebrow">Or add all to an existing song</div>` +
       state.songs.map(s => `<button class="opt" data-filestarget="${s.id}"><span class="dot" style="--tint:var(--gold)"></span>${esc(s.title)}<span class="r">${assetsFor(s.id).length} assets</span></button>`).join("") : ""}
   `);
 }
@@ -978,10 +1072,15 @@ document.addEventListener("click", async e => {
   if (act === "do-del-song") { deleteSong(t.dataset.ref); closeSheet(); renderAll(); return; }
   if (act === "confirm-del-asset") { const a = byId(t.dataset.ref); confirmSheet(`Remove “${a.title}”?`, "Removes it from the library and clears any slots using it. Original files on disk are not touched.", "do-del-asset", a.id); return; }
   if (act === "do-del-asset") { deleteAsset(t.dataset.ref); closeSheet(); renderAll(false); return; }
+  if (act === "smart-import") {
+    closeSheet(); importFiles(pendingFiles, { smart: true }); pendingFiles = null; return;
+  }
   if (act === "files-new") {
     const name = $("#ft-new").value.trim() || "Imported " + new Date().toLocaleDateString();
     closeSheet(); importFiles(pendingFiles, { newSongName: name }); pendingFiles = null; return;
   }
+  if (act === "reanalyze") { reanalyzePreviewSheet(); return; }
+  if (act === "do-reanalyze") { applyReanalyze(); return; }
   if (t.dataset.filestarget) { closeSheet(); importFiles(pendingFiles, { targetSongId: t.dataset.filestarget }); pendingFiles = null; return; }
   if (act === "ip-close") { state.importing = null; closeSheet(); renderAll(false); return; }
 

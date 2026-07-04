@@ -59,6 +59,85 @@
     return inside.length > 1 ? inside[0] : rootName;
   }
 
+  /* -------- filename intelligence: versions + canonical song titles -------- */
+  const VERSION_WORDS = new Set(["final","master","mix","mixdown","bounce","bounced","draft","take",
+    "rough","demo","version","ver","v","edit","export","render","copy","alt","revision","rev",
+    "new","update","updated","latest","old","wip"]);
+
+  function isVersionToken(w) {
+    const t = w.toLowerCase().replace(/[()]/g, "");
+    if (!t) return false;
+    if (/^\d{1,3}$/.test(t)) return true;                    // 2, (3)
+    if (/^v(er)?\.?\d{1,3}$/.test(t)) return true;           // v2, ver3
+    if (VERSION_WORDS.has(t)) return true;                   // final, master
+    const m = t.match(/^([a-z]+)(\d{1,3})$/);                // mix2, take1, final3
+    return !!(m && VERSION_WORDS.has(m[1]));
+  }
+  function versionNumber(w) {
+    const t = w.toLowerCase().replace(/[()]/g, "");
+    let m = t.match(/^v(?:er)?\.?(\d{1,3})$/); if (m) return { n: +m[1], strength: 3 };
+    m = t.match(/^([a-z]+)(\d{1,3})$/); if (m && VERSION_WORDS.has(m[1])) return { n: +m[2], strength: 2 };
+    if (/^\d{1,3}$/.test(t)) return { n: +t, strength: 1 };
+    return null;
+  }
+
+  /* Parse "baddest times (apple master)_2.m4a" ->
+     { canonical:"baddest times", label:"apple master 2", order:2 } */
+  function parseVersion(raw) {
+    let base = titleize(raw); // extension stripped, separators normalized
+    const labelParts = [];
+    let order = null, strength = 0;
+
+    // Interleave stripping of trailing loose tokens and trailing
+    // parentheticals until neither applies (handles "name(apple master)_1").
+    const noteNumber = t => { const v = versionNumber(t); if (v && v.strength >= strength) { order = v.n; strength = v.strength; } };
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const m = base.match(/\(([^()]*)\)\s*$/);
+      if (m) {
+        const inner = m[1].trim();
+        const toks = inner.split(/\s+/).filter(Boolean);
+        const versionish = toks.length && (toks.every(t => /^\d{1,3}$/.test(t)) || toks.some(isVersionToken));
+        if (versionish) {
+          labelParts.unshift(inner);
+          toks.forEach(noteNumber);
+          base = base.slice(0, m.index).trim();
+          changed = true;
+          continue;
+        }
+      }
+      const words = base.split(/\s+/).filter(Boolean);
+      if (words.length > 1 && isVersionToken(words[words.length - 1])) {
+        const w = words.pop();
+        labelParts.unshift(w.replace(/[()]/g, ""));
+        noteNumber(w);
+        base = words.join(" ");
+        changed = true;
+      }
+    }
+    let canonical = base.replace(/[\s\-_.]+$/, "").trim();
+    if (canonical.length < 2 || /^\d+$/.test(canonical)) {
+      canonical = titleize(raw); // voice-memo style names: don't over-strip
+      return { canonical, label: null, order: null };
+    }
+    return { canonical, label: labelParts.length ? labelParts.join(" ") : null, order };
+  }
+
+  /* Cluster filenames into proposed songs: [{title, files:[...]}] */
+  function clusterByCanonical(names) {
+    const map = new Map();
+    names.forEach((name, i) => {
+      const pv = parseVersion(name);
+      const key = pv.canonical.toLowerCase();
+      if (!map.has(key)) map.set(key, { title: pv.canonical, indices: [], versions: 0 });
+      const g = map.get(key);
+      g.indices.push(i);
+      if (pv.label || pv.order != null) g.versions++;
+    });
+    return Array.from(map.values());
+  }
+
   function targetForName(name) {
     const n = String(name).toLowerCase();
     if (n.includes("intro")) return "Intro";
@@ -160,6 +239,7 @@
     extOf, isAudioName, titleize, inferRole, groupForPath,
     targetForName, targetForRole, opForState,
     progressOf, riskOf, applyAssign, applyState,
-    partitionDuplicates, defaultSections, mmss, agoFrom
+    partitionDuplicates, defaultSections, mmss, agoFrom,
+    parseVersion, clusterByCanonical, isVersionToken
   };
 })(typeof window !== "undefined" ? window : globalThis);

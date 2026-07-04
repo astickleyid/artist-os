@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
   // Import two real audio files via the file picker → new song flow
   await page.locator('[data-act="pick-files"]').first().click();
   await page.setInputFiles('#pick-files', ['/tmp/hook take1.wav', '/tmp/trap beat v1.wav']);
-  await page.waitForSelector('#ft-new');
+  await page.waitForSelector('#ft-new'); // smart sheet includes the override field
   await page.fill('#ft-new', 'Test Song');
   await page.locator('[data-act="files-new"]').click();
   await page.waitForSelector('[data-act="ip-close"]', { timeout: 15000 });
@@ -45,6 +45,47 @@ const server = http.createServer((req, res) => {
   assert(st.assets.every(a => a.dur === 1), 'real durations decoded (1s wavs)');
   assert(st.assets.every(a => a.hash), 'content hashes computed');
   assert(st.events >= 3, 'import events recorded');
+
+  // Smart import: 6 differently-suffixed versions collapse into ONE song
+  await page.locator('#open-import').click();
+  await page.locator('#sheet [data-act="pick-files"]').click();
+  await page.setInputFiles('#pick-files', [
+    '/tmp/night drive v1.wav','/tmp/night drive v2.wav','/tmp/night drive (3).wav',
+    '/tmp/night drive mix4.wav','/tmp/night drive final.wav','/tmp/night drive FINAL final 6.wav'
+  ]);
+  await page.waitForSelector('[data-act="smart-import"]');
+  const proposal = await page.locator('#sheet .hint').first().textContent();
+  assert(proposal.includes('1 song'), 'smart sheet proposes exactly 1 song: ' + proposal);
+  await page.locator('.btn[data-act="smart-import"]').click();
+  await page.waitForSelector('[data-act="ip-close"]', { timeout: 20000 });
+  await page.locator('[data-act="ip-close"]').click();
+  const vs = await page.evaluate(() => {
+    const s = window.__AOS.state.songs.find(x => x.title.toLowerCase() === 'night drive');
+    if (!s) return { found: false };
+    const assets = window.__AOS.state.assets.filter(a => a.songId === s.id);
+    return {
+      found: true, count: assets.length,
+      orders: assets.map(a => a.vOrder).filter(n => n != null).sort((a, b) => a - b),
+      labels: assets.map(a => a.version).filter(Boolean).length,
+      stackEvent: window.__AOS.state.events.some(e => e.songId === s.id && e.summary.includes('versions of'))
+    };
+  });
+  assert(vs.found, 'one Night Drive song created from 6 version files');
+  assert(vs.count === 6, 'all 6 versions in one song (got ' + vs.count + ')');
+  assert(JSON.stringify(vs.orders) === JSON.stringify([1,2,3,4,6]), 'version numbers parsed: ' + JSON.stringify(vs.orders));
+  assert(vs.labels === 6, 'every file version-labeled');
+  assert(vs.stackEvent, 'version-stack event recorded');
+  // UI: open the song via its card, switch to Assets, verify stack + Latest badge
+  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.locator('#desk-list [data-song]', { hasText: 'night drive' }).first().click();
+  await page.locator('[data-songtab="assets"]').click();
+  await page.waitForTimeout(300);
+  const ui = await page.evaluate(() => ({
+    stackHeader: document.body.innerHTML.includes('Version Stack'),
+    latest: document.body.innerHTML.includes('>Latest<')
+  }));
+  assert(ui.stackHeader, 'Version Stack header shown');
+  assert(ui.latest, 'Latest badge shown on top version');
 
   // Duplicate import → dedup skips both
   await page.locator('#open-import').click();
@@ -92,7 +133,7 @@ const server = http.createServer((req, res) => {
     events: window.__AOS.state.events.length,
     hookAssigned: !!window.__AOS.state.songs.find(x => x.title === 'Test Song').sections[2].assetId
   }));
-  assert(st2.songs >= 1 && st2.assets === 2 && st2.events >= 4, 'catalog persisted across reload');
+  assert(st2.songs >= 2 && st2.assets === 8 && st2.events >= 10, 'catalog persisted across reload (' + JSON.stringify(st2) + ')');
   assert(st2.hookAssigned, 'slot assignment persisted');
 
   const fatal = errors.filter(e => !e.includes('AudioContext') && !e.includes('play()'));
