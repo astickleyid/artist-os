@@ -47,7 +47,7 @@ actor SyncService {
     private let credentialsKey = "artistos.sync.credentials"
     private(set) var credentials: Credentials?
 
-    init(baseURL: URL = URL(string: "https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev")!,
+    init(baseURL: URL = URL(string: "https://artist-os-sync.astickley9.workers.dev")!,
          client: SyncHTTPClient = URLSessionHTTPClient(),
          defaults: UserDefaults = .standard) {
         self.baseURL = baseURL

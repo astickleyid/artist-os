@@ -602,7 +602,7 @@ function resolveDecision(slotId, winnerId) {
 }
 
 /* ---------- sync: Cloudflare push/pull + device linking + opt-in blobs ---------- */
-const SYNC_URL = window.AOS_SYNC_URL || "https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev";
+const SYNC_URL = window.AOS_SYNC_URL || "https://artist-os-sync.astickley9.workers.dev";
 const dirty = Sync.makeDirtyTracker();
 let syncState = { accountId: null, token: null, seq: 0, status: "off", lastError: null };
 let pushTimer = null;

@@ -31,7 +31,7 @@ const server = http.createServer((req, res) => {
     const buf = Buffer.from(await res.arrayBuffer());
     await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: buf });
   };
-  await page.route('https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev/**', routeToWorker);
+  await page.route('https://artist-os-sync.astickley9.workers.dev/**', routeToWorker);
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -250,7 +250,7 @@ const server = http.createServer((req, res) => {
   // Second "device": fresh browser context (isolated storage), same worker backend
   const context2 = await browser.newContext();
   const page2 = await context2.newPage();
-  await page2.route('https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev/**', routeToWorker); // SAME workerEnv = same backend
+  await page2.route('https://artist-os-sync.astickley9.workers.dev/**', routeToWorker); // SAME workerEnv = same backend
   await page2.goto('http://localhost:8931/');
   await page2.evaluate(() => { window.__AOS.state.songs = []; }); // sanity: device 2 starts empty (fresh IndexedDB anyway)
 
