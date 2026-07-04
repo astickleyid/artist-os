@@ -234,12 +234,77 @@
     return Math.floor(d / DAY) + "d ago";
   }
 
+  /* -------- version stack ordering (shared by all surfaces) -------- */
+  function sortVersions(assets) {
+    return [...assets].sort((a, b) => {
+      const av = a.vOrder != null ? a.vOrder : -1, bv = b.vOrder != null ? b.vOrder : -1;
+      if (av !== bv) return bv - av;
+      if ((a.modifiedAt || 0) !== (b.modifiedAt || 0)) return (b.modifiedAt || 0) - (a.modifiedAt || 0);
+      return (b.created || 0) - (a.created || 0);
+    });
+  }
+  function versionStack(assets) {
+    return sortVersions(assets.filter(a => a.version || a.vOrder != null));
+  }
+  /* Master decisions consider only full-mix bounces: a hook take and a beat
+     both labeled "v1" are not versions of each other. */
+  function masterStack(assets) {
+    return versionStack(assets).filter(a => a.role === "fullMix");
+  }
+
+  /* -------- decision engine v1 --------
+     The app proposes, the artist approves. Two deterministic rules:
+     D1 — competing takes: >=2 assets of a decisive role escalate the matching
+          slot to Needs Decision (escalate-only, fires once).
+     D2 — master version: a stack of >=2 versions needs a pinned master; a
+          newer version than the pinned master re-opens the question.      */
+  const DECISIVE_ROLES = { hook: "Hook", bridge: "Bridge", leadVocal: "Verse" };
+
+  function applyAutoDecisions(song, assets) {
+    const fired = [];
+    for (const [role, slotTarget] of Object.entries(DECISIVE_ROLES)) {
+      const candidates = assets.filter(a => a.role === role);
+      if (candidates.length < 2) continue;
+      for (const slot of song.sections) {
+        if (targetForName(slot.name) !== slotTarget) continue;
+        if (!["open", "candidate", "experiment"].includes(slot.state)) continue;
+        slot.state = "needsDecision";
+        slot.conf = Math.max(slot.conf || 0, 0.5);
+        fired.push({ slotId: slot.id, slotName: slot.name, role, count: candidates.length });
+      }
+    }
+    return fired;
+  }
+
+  function decisionsFor(song, assets) {
+    const out = [];
+    for (const slot of song.sections) {
+      if (slot.state === "needsDecision") {
+        out.push({ kind: "slot", slotId: slot.id, songId: song.id,
+          title: `${slot.name} — ${song.title}`, detail: "Candidates waiting on a call" });
+      }
+    }
+    const stack = masterStack(assets);
+    if (stack.length >= 2) {
+      const top = stack[0];
+      if (!song.masterAssetId) {
+        out.push({ kind: "master", songId: song.id, title: `Current master — ${song.title}`,
+          detail: `${stack.length} versions stacked, none pinned as master` });
+      } else if (song.masterAssetId !== top.id && stack.some(a => a.id === song.masterAssetId)) {
+        out.push({ kind: "master", songId: song.id, title: `New version — ${song.title}`,
+          detail: `${top.version ? top.version : "A newer version"} challenges the pinned master` });
+      }
+    }
+    return out;
+  }
+
   g.AOSCore = {
     ROLES, STATES, OPS, TARGETS, AUDIO_EXT,
     extOf, isAudioName, titleize, inferRole, groupForPath,
     targetForName, targetForRole, opForState,
     progressOf, riskOf, applyAssign, applyState,
     partitionDuplicates, defaultSections, mmss, agoFrom,
-    parseVersion, clusterByCanonical, isVersionToken
+    parseVersion, clusterByCanonical, isVersionToken,
+    sortVersions, versionStack, masterStack, applyAutoDecisions, decisionsFor, DECISIVE_ROLES
   };
 })(typeof window !== "undefined" ? window : globalThis);

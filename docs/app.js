@@ -65,13 +65,11 @@ const state = {
 const song = () => state.songs.find(s => s.id === state.songId);
 const byId = id => state.assets.find(a => a.id === id);
 const songOf = a => state.songs.find(s => s.id === a.songId);
-const assetsFor = id => state.assets.filter(a => a.songId === id).sort((a, b) => {
-  const av = a.vOrder != null ? a.vOrder : -1, bv = b.vOrder != null ? b.vOrder : -1;
-  if (av !== bv) return bv - av;
-  if ((a.modifiedAt || 0) !== (b.modifiedAt || 0)) return (b.modifiedAt || 0) - (a.modifiedAt || 0);
-  return b.created - a.created;
-});
-const versionCount = id => state.assets.filter(a => a.songId === id && (a.version || a.vOrder != null)).length;
+const assetsFor = id => C.sortVersions(state.assets.filter(a => a.songId === id));
+const stackFor = id => C.versionStack(state.assets.filter(a => a.songId === id));
+const masterStackFor = id => C.masterStack(state.assets.filter(a => a.songId === id));
+const versionCount = id => masterStackFor(id).length;
+const allDecisions = () => state.songs.flatMap(s => C.decisionsFor(s, state.assets.filter(a => a.songId === s.id)));
 const existingHashes = () => new Set(state.assets.map(a => a.hash).filter(Boolean));
 
 async function persistSong(s) { await dbPut("songs", s); }
@@ -371,6 +369,7 @@ async function importFiles(files, opts = {}) {
     const vc = versionCount(sid);
     if (vc >= 2) record(sid, "Song", "Imported", `${vc} versions of ${s.title} stacked — latest flagged.`);
   }
+  runDecisionEngine([...perSong.keys()]);
 
   state.importing.summary =
     `${added} asset${added === 1 ? "" : "s"} imported · ${newSongs} new song${newSongs === 1 ? "" : "s"} · ` +
@@ -495,7 +494,11 @@ async function reconcile(announce) {
     record(a.songId, C.targetForRole(a.role), "Archived", summary, true);
   }
 
-  if (added || changed) { toast(`Observed: ${added ? added + " new" : ""}${added && changed ? ", " : ""}${changed ? changed + " changed" : ""}`); renderAll(false); }
+  if (added || changed) {
+    runDecisionEngine();
+    toast(`Observed: ${added ? added + " new" : ""}${added && changed ? ", " : ""}${changed ? changed + " changed" : ""}`);
+    renderAll(false);
+  }
   else if (announce) renderAll(false);
 }
 
@@ -583,6 +586,29 @@ function resolveDecision(slotId, winnerId) {
   setSlotState(slotId, "locked");
 }
 
+/* ---------- decision engine ---------- */
+function runDecisionEngine(songIds) {
+  const ids = songIds || state.songs.map(s => s.id);
+  for (const id of ids) {
+    const s = state.songs.find(x => x.id === id); if (!s) continue;
+    const fired = C.applyAutoDecisions(s, state.assets.filter(a => a.songId === id));
+    if (fired.length) {
+      persistSong(s);
+      for (const f of fired) {
+        record(id, C.targetForName(f.slotName), "Needs Decision",
+          `${f.slotName} auto-flagged: ${f.count} ${C.ROLES[f.role].toLowerCase()} candidates need a call.`, true);
+      }
+    }
+  }
+}
+function pinMaster(songId, assetId) {
+  const s = state.songs.find(x => x.id === songId); if (!s) return;
+  const a = byId(assetId); if (!a || s.masterAssetId === assetId) return;
+  s.masterAssetId = assetId; persistSong(s);
+  record(songId, "Master", "Approved", `${a.title}${a.version ? " (" + a.version + ")" : ""} pinned as current master.`);
+  toast(`★ ${a.title} is the master`);
+}
+
 /* ---------- re-analysis of existing catalog ---------- */
 function reanalyzePlan() {
   const moves = [];
@@ -636,6 +662,7 @@ function applyReanalyze() {
     if (s && !assetsFor(id).length && s.sections.every(x => !x.assetId)) deleteSong(id);
     else if (s && versionCount(id) >= 2) record(id, "Song", "Imported", `${versionCount(id)} versions of ${s.title} stacked — latest flagged.`);
   }
+  runDecisionEngine();
   closeSheet(); renderAll(false);
   toast(moved || tagged ? `Reorganized: ${moved} moved, ${tagged} version-tagged` : "Catalog already organized");
 }
@@ -734,9 +761,26 @@ function renderOnboard() {
   </div>`;
 }
 
+function renderDecideInbox() {
+  const list = allDecisions();
+  if (!list.length) return "";
+  return `<div class="eyebrow" style="color:var(--gold)">Decide · ${list.length}</div>` + list.map(d => `
+    <button class="card panel" data-decision="${d.kind}" data-dsong="${d.songId}" ${d.slotId ? `data-dslot="${d.slotId}"` : ""}
+      style="margin-bottom:10px;border-color:color-mix(in srgb,var(--gold) 38%,transparent)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:17px">⚖️</span>
+        <div style="flex:1;min-width:0">
+          <div class="row-title" style="font-size:14px">${esc(d.title)}</div>
+          <div class="sub" style="margin-top:2px">${esc(d.detail)}</div>
+        </div>
+        <span class="badge">A/B</span>
+      </div>
+    </button>`).join("") + `<div style="height:8px"></div>`;
+}
+
 function renderSongs() {
   if (!state.songs.length) return renderOnboard();
-  return watchBanner() + `<div class="eyebrow">Songs</div>` + state.songs.map(s => songCard(s)).join("") +
+  return watchBanner() + renderDecideInbox() + `<div class="eyebrow">Songs</div>` + state.songs.map(s => songCard(s)).join("") +
     `<button class="btn ghost add-slot" data-act="new-song">＋ New song</button>`;
 }
 
@@ -768,6 +812,7 @@ function renderSongView() {
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <div class="segs">${[["master","Master"],["changes","Changes"],["assets","Assets"]].map(([k, l]) =>
       `<button data-songtab="${k}" class="${state.songTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
+    ${versionCount(s.id) >= 2 ? `<button class="btn ghost" data-versioncompare="${s.id}" style="min-height:40px;color:var(--blue)">⚖ Compare versions</button>` : ""}
     <button class="btn ghost" data-act="log-change" style="min-height:40px;color:var(--gold)">＋ Log change</button>
   </div>${body}`;
 }
@@ -819,7 +864,7 @@ function renderAssetCards(list, withSong) {
           <div class="row-title" style="font-size:14.5px">${esc(a.title)} ${playing ? eqHtml() : ""}</div>
           <div class="sub">${C.ROLES[a.role]}${a.dur ? " · " + C.mmss(a.dur) : ""}${a.demo ? " · demo" : ""}${withSong ? " · " + esc(songOf(a)?.title || "") : ""}</div>
         </div>
-        ${a.id === latestId ? `<span class="badge" style="--tint:var(--green)">Latest</span>` : (a.version ? `<span class="badge">${esc(a.version)}</span>` : "")}
+        ${(songOf(a) && songOf(a).masterAssetId === a.id) ? `<span class="badge" style="--tint:var(--gold)">★ Master</span>` : (a.id === latestId ? `<span class="badge" style="--tint:var(--green)">Latest</span>` : (a.version ? `<span class="badge">${esc(a.version)}</span>` : ""))}
         <button class="kebab" data-assetmenu="${a.id}" aria-label="Asset options">⋯</button>
       </div>
       <canvas class="wave" data-wave="${a.id}"></canvas>
@@ -964,9 +1009,9 @@ let ab = null, pendingFiles = null;
 function compareSheet(slotId) {
   const s = song(), x = s.sections.find(z => z.id === slotId);
   const cands = assetsFor(s.id);
-  if (!ab || ab.slot !== slotId) {
+  if (!ab || ab.kind !== "slot" || ab.slot !== slotId) {
     const a0 = x.assetId || cands[0].id;
-    ab = { slot: slotId, a: a0, b: (cands.find(c => c.id !== a0) || cands[0]).id };
+    ab = { kind: "slot", slot: slotId, a: a0, b: (cands.find(c => c.id !== a0) || cands[0]).id };
   }
   const side = (lbl, asset, key, tint, hex) => `
     <div class="ab ${state.npAsset && state.npAsset.id === asset.id ? "live" : ""}" style="--tint:${tint}">
@@ -982,6 +1027,34 @@ function compareSheet(slotId) {
   openSheet(`
     <h3>Compare — ${esc(x.name)}</h3>
     <div class="hint">Switch sides without losing the playhead. Choosing locks the slot.</div>
+    <div class="ab-grid">${side("A", byId(ab.a), "a", "var(--gold)", "#D6AE5C")}${side("B", byId(ab.b), "b", "var(--blue)", "#80A6FF")}</div>
+    <button class="btn ghost" style="width:100%" data-act="close">Keep undecided</button>`);
+  drawWaves($("#sheet"));
+}
+
+function versionCompareSheet(songId) {
+  const s = state.songs.find(x => x.id === songId); if (!s) return;
+  const cands = masterStackFor(songId);
+  if (cands.length < 2) return;
+  if (!ab || ab.kind !== "master" || ab.songId !== songId) {
+    const a0 = s.masterAssetId && cands.some(c => c.id === s.masterAssetId) ? s.masterAssetId : cands[1].id;
+    const b0 = cands.find(c => c.id !== a0).id;
+    ab = { kind: "master", songId, a: a0, b: cands[0].id !== a0 ? cands[0].id : b0 };
+  }
+  const side = (lbl, asset, key, tint, hex) => `
+    <div class="ab ${state.npAsset && state.npAsset.id === asset.id ? "live" : ""}" style="--tint:${tint}">
+      <div class="lbl">${lbl}</div>
+      <select class="field" data-abpick="${key}">${cands.map(c =>
+        `<option value="${c.id}" ${c.id === asset.id ? "selected" : ""}>${esc(c.title)}${c.version ? " · " + esc(c.version) : ""}${s.masterAssetId === c.id ? " ★" : ""}</option>`).join("")}</select>
+      <canvas class="wave" data-wave="${asset.id}" data-tint="${hex}"></canvas>
+      <div class="fn mono">${esc(asset.file)}</div>
+      <button class="btn" style="border-color:${tint};color:${tint}" data-ablisten="${key}">
+        ${state.npAsset && state.npAsset.id === asset.id && Player.playing() ? "❚❚ Pause" : "▶ Listen " + lbl}</button>
+      <button class="btn ${key === "a" ? "gold" : "blue"}" data-abchoose="${key}">Pin ${lbl} as master</button>
+    </div>`;
+  openSheet(`
+    <h3>Current master — ${esc(s.title)}</h3>
+    <div class="hint">Compare any two versions at the same playhead. Pinning marks the song's source of truth.</div>
     <div class="ab-grid">${side("A", byId(ab.a), "a", "var(--gold)", "#D6AE5C")}${side("B", byId(ab.b), "b", "var(--blue)", "#80A6FF")}</div>
     <button class="btn ghost" style="width:100%" data-act="close">Keep undecided</button>`);
   drawWaves($("#sheet"));
@@ -1018,6 +1091,7 @@ function assetMenuSheet(id) {
     <h3>${esc(a.title)}</h3>
     <div class="hint mono">${esc(a.file)}${a.size ? " · " + (a.size / 1048576).toFixed(1) + " MB" : ""}${a.sourcePath ? " · " + esc(a.sourcePath) : ""}</div>
     <button class="opt" data-play="${id}"><span class="dot" style="--tint:var(--gold)"></span>Preview</button>
+    ${((a.version || a.vOrder != null) && a.role === "fullMix") ? `<button class="opt" data-pinmaster="${id}"><span class="dot" style="--tint:var(--gold)"></span>Set as current master</button>` : ""}
     <button class="opt" data-act="confirm-del-asset" data-ref="${id}"><span class="dot" style="--tint:var(--red)"></span><span style="color:var(--red)">Remove from library…</span></button>`);
 }
 function confirmSheet(title, msg, act, ref) {
@@ -1084,6 +1158,14 @@ document.addEventListener("click", async e => {
   if (t.dataset.filestarget) { closeSheet(); importFiles(pendingFiles, { targetSongId: t.dataset.filestarget }); pendingFiles = null; return; }
   if (act === "ip-close") { state.importing = null; closeSheet(); renderAll(false); return; }
 
+  if (t.dataset.decision) {
+    state.tab = "songs"; state.songId = t.dataset.dsong; state.songTab = "master"; renderAll();
+    if (t.dataset.decision === "slot") compareSheet(t.dataset.dslot);
+    else versionCompareSheet(t.dataset.dsong);
+    return;
+  }
+  if (t.dataset.versioncompare) { versionCompareSheet(t.dataset.versioncompare); return; }
+  if (t.dataset.pinmaster) { const a = byId(t.dataset.pinmaster); pinMaster(a.songId, a.id); closeSheet(); renderAll(false); return; }
   if (t.dataset.compare) { compareSheet(t.dataset.compare); return; }
   if (t.dataset.assign !== undefined) { assign(t.dataset.slotref, t.dataset.assign === "none" ? null : t.dataset.assign); closeSheet(); renderAll(false); return; }
   if (t.dataset.state) { setSlotState(t.dataset.slotref, t.dataset.state); closeSheet(); renderAll(false); return; }
@@ -1095,13 +1177,15 @@ document.addEventListener("click", async e => {
     const a = byId(ab[t.dataset.ablisten]);
     if (state.npAsset && state.npAsset.id === a.id) { Player.playing() ? Player.pause() : Player.resume(); }
     else Player.switchTo(a);
-    compareSheet(ab.slot); return;
+    ab.kind === "master" ? versionCompareSheet(ab.songId) : compareSheet(ab.slot);
+    return;
   }
   if (t.dataset.abchoose) {
     const winner = byId(ab[t.dataset.abchoose]);
-    resolveDecision(ab.slot, winner.id);
+    if (ab.kind === "master") { pinMaster(ab.songId, winner.id); }
+    else { resolveDecision(ab.slot, winner.id); toast(winner.title + " locked ✓"); }
     Player.stop(); ab = null; closeSheet(); renderAll(false);
-    toast(winner.title + " locked ✓"); return;
+    return;
   }
 
   const slotEl = e.target.closest("[data-slot]");
@@ -1109,7 +1193,10 @@ document.addEventListener("click", async e => {
 });
 
 document.addEventListener("change", e => {
-  if (e.target.dataset && e.target.dataset.abpick) { ab[e.target.dataset.abpick] = e.target.value; compareSheet(ab.slot); }
+  if (e.target.dataset && e.target.dataset.abpick) {
+    ab[e.target.dataset.abpick] = e.target.value;
+    ab.kind === "master" ? versionCompareSheet(ab.songId) : compareSheet(ab.slot);
+  }
 });
 $("#scrim").addEventListener("click", () => { if (!state.importing) closeSheet(); });
 $("#np-play").addEventListener("click", () => { Player.playing() ? Player.pause() : Player.resume(); });
@@ -1144,6 +1231,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
   state.assets = assets;
   state.events = events.sort((a, b) => b.t - a.t);
   await restoreFolder().catch(() => {});
+  runDecisionEngine();
   renderAll();
 })();
 
