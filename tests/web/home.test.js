@@ -1,4 +1,4 @@
-require('/home/claude/artist-os/docs/core.js');
+require(require('path').join(__dirname,'../../docs/core.js'));
 const C = globalThis.AOSCore;
 const assert = require('assert');
 

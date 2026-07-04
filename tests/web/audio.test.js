@@ -1,4 +1,4 @@
-require('/home/claude/artist-os/docs/audio-intel.js');
+require(require('path').join(__dirname,'../../docs/audio-intel.js'));
 const A = globalThis.AOSAudio;
 const assert = require('assert');
 const SR = 22050;

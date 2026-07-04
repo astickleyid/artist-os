@@ -1,4 +1,4 @@
-require('/home/claude/artist-os/docs/sync.js');
+require(require('path').join(__dirname,'../../docs/sync.js'));
 const S = globalThis.AOSSync;
 const assert = require('assert');
 

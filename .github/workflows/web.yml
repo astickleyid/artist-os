@@ -1,0 +1,26 @@
+name: Web
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pure logic unit tests (core, audio, segment, assembly, home, sync)
+        run: |
+          for f in core audio segment assembly home sync; do
+            if [ -f "tests/web/$f.test.js" ]; then
+              echo "== $f =="
+              node "tests/web/$f.test.js"
+            fi
+          done
+      - name: Worker tests
+        run: node worker/test/worker.test.js

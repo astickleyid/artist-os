@@ -198,6 +198,13 @@ const Player = {
     const p = this.pos(), was = this.playing();
     this.play(asset, Math.min(p, (asset.dur || p + 1) - .5)).then(() => { if (!was) this.pause(); });
   },
+  async playRange(asset, start, end) {
+    // Preview just one section: start at `start`, auto-stop at `end`.
+    if (this._rangeTimer) { clearTimeout(this._rangeTimer); this._rangeTimer = null; }
+    await this.play(asset, start);
+    const ms = Math.max(200, (end - start) * 1000);
+    this._rangeTimer = setTimeout(() => { this.pause(); }, ms);
+  },
   seek(frac) {
     const a = state.npAsset; if (!a) return;
     const d = this.dur(); if (!d) return;
@@ -772,6 +779,298 @@ async function drainAnalysis() {
   analyzeBusy = false;
 }
 
+/* ---------------- section intelligence ---------------- */
+// Decode an asset and run structural segmentation. Stores proposed sections
+// on the asset (artist confirms/renames later). Heavier than BPM/key, so it
+// runs on demand, not in the background queue.
+const SEGMENT_SIZE_CAP = 60 * 1024 * 1024;
+async function segmentAsset(id) {
+  const a = byId(id);
+  if (!a) return null;
+  if (a.demo) { // demo assets have no real audio — synthesize a plausible structure
+    a.sections = demoSections(a);
+    await persistAsset(a);
+    return a.sections;
+  }
+  const rec = await dbGet("blobs", id);
+  if (!rec || !rec.blob || rec.blob.size > SEGMENT_SIZE_CAP) return null;
+  if (!decodeCtx) decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const buf = await rec.blob.arrayBuffer();
+  const audio = await decodeCtx.decodeAudioData(buf.slice(0));
+  // downsample to mono ~11025 for the O(n^2) SSM to stay fast
+  const src = audio.getChannelData(0);
+  const targetSR = 11025;
+  const ratio = Math.max(1, Math.floor(audio.sampleRate / targetSR));
+  const sr = audio.sampleRate / ratio;
+  const mono = new Float32Array(Math.floor(src.length / ratio));
+  for (let i = 0; i < mono.length; i++) mono[i] = src[i * ratio];
+  const result = window.AOSSegment.segment(mono, sr, { hopSeconds: 0.5, minSectionSeconds: 6 });
+  a.sections = result.sections.map(x => ({
+    id: uid(), label: x.label, start: x.start, end: x.end,
+    confidence: x.confidence, cluster: x.cluster, confirmed: false
+  }));
+  a.segmentedAt = now();
+  await persistAsset(a);
+  record(a.songId, "Structure", "Analyzed",
+    `Detected ${a.sections.length} sections in ${a.title} — confirm or rename them.`, true);
+  return a.sections;
+}
+
+function demoSections(a) {
+  // deterministic pseudo-structure for demo/file-less assets
+  const dur = a.dur || 180;
+  const plan = [["Intro", .06], ["Verse", .18], ["Hook", .18], ["Verse", .16], ["Hook", .16], ["Bridge", .12], ["Hook", .14]];
+  let t = 0; const out = [];
+  for (const [label, frac] of plan) {
+    const len = dur * frac;
+    out.push({ id: uid(), label, start: +t.toFixed(2), end: +(t + len).toFixed(2),
+      confidence: label === "Hook" ? .72 : label === "Intro" ? .7 : .55, cluster: 0, confirmed: false });
+    t += len;
+  }
+  return out;
+}
+
+// Gather every confirmed/proposed section-slice across all versions of a song,
+// carrying tempo/key so the assembly board + unified folders can show them.
+function sectionSlicesFor(songId) {
+  const out = [];
+  for (const a of assetsFor(songId)) {
+    if (!a.sections) continue;
+    for (const sec of a.sections) {
+      out.push({
+        assetId: a.id, assetTitle: a.title, version: a.version || "v1",
+        sectionId: sec.id, label: sec.label, start: sec.start, end: sec.end,
+        confidence: sec.confidence, bpm: a.bpm || null, keyName: a.keyName || null
+      });
+    }
+  }
+  return out;
+}
+
+/* ---------------- cross-version render (Web Audio -> WAV) ---------------- */
+// Decode each needed version once, slice each pick, equal-power crossfade at
+// seams, write a downloadable WAV. Honest cuts — no time-stretch in v1.
+async function renderRecipe(recipe, opts) {
+  opts = opts || {};
+  if (!decodeCtx) decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const outSR = 44100;
+
+  // decode each distinct source asset once
+  const need = [...new Set(recipe.map(p => p.assetId))];
+  const decoded = {};
+  for (const id of need) {
+    const rec = await dbGet("blobs", id);
+    if (!rec || !rec.blob) throw new Error("Missing audio for a selected version.");
+    const buf = await rec.blob.arrayBuffer();
+    decoded[id] = await decodeCtx.decodeAudioData(buf.slice(0));
+  }
+
+  const xf = opts.crossfade != null ? opts.crossfade : 0.04; // seconds
+  // total length: sum of slices minus crossfade overlaps
+  let totalSec = 0;
+  recipe.forEach((p, i) => { totalSec += Math.max(0, p.end - p.start); if (i > 0) totalSec -= xf; });
+  const totalSamples = Math.max(1, Math.ceil(totalSec * outSR));
+  const outL = new Float32Array(totalSamples);
+  const outR = new Float32Array(totalSamples);
+
+  let writePos = 0; // in samples
+  recipe.forEach((p, idx) => {
+    const audio = decoded[p.assetId];
+    const inSR = audio.sampleRate;
+    const chL = audio.getChannelData(0);
+    const chR = audio.numberOfChannels > 1 ? audio.getChannelData(1) : chL;
+    const startS = Math.floor(p.start * inSR);
+    const endS = Math.min(chL.length, Math.floor(p.end * inSR));
+    const sliceLen = endS - startS;
+    if (sliceLen <= 0) return;
+
+    // resample factor input->output
+    const step = inSR / outSR;
+    const outLen = Math.floor(sliceLen / step);
+    const xfSamples = Math.floor(xf * outSR);
+    // where this slice begins in the output (overlap previous by xfSamples)
+    const base = idx === 0 ? 0 : writePos - xfSamples;
+
+    for (let i = 0; i < outLen; i++) {
+      const srcIdx = startS + Math.floor(i * step);
+      let l = chL[srcIdx] || 0, r = chR[srcIdx] || 0;
+      const oi = base + i;
+      if (oi < 0 || oi >= totalSamples) continue;
+      // equal-power crossfade over the first xfSamples of every slice after the first
+      if (idx > 0 && i < xfSamples) {
+        const t = i / xfSamples;               // 0..1
+        const gIn = Math.sin(t * Math.PI / 2); // fade in (equal power)
+        outL[oi] = outL[oi] * Math.cos(t * Math.PI / 2) + l * gIn;
+        outR[oi] = outR[oi] * Math.cos(t * Math.PI / 2) + r * gIn;
+      } else {
+        outL[oi] = l; outR[oi] = r;
+      }
+    }
+    writePos = base + outLen;
+  });
+
+  return encodeWAV([outL.subarray(0, writePos), outR.subarray(0, writePos)], outSR);
+}
+
+// 16-bit PCM stereo WAV encoder
+function encodeWAV(channels, sampleRate) {
+  const len = channels[0].length;
+  const numCh = channels.length;
+  const buffer = new ArrayBuffer(44 + len * numCh * 2);
+  const view = new DataView(buffer);
+  const ws = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  ws(0, "RIFF"); view.setUint32(4, 36 + len * numCh * 2, true); ws(8, "WAVE");
+  ws(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, numCh, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numCh * 2, true); view.setUint16(32, numCh * 2, true);
+  view.setUint16(34, 16, true); ws(36, "data"); view.setUint32(40, len * numCh * 2, true);
+  let off = 44;
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < numCh; c++) {
+      let v = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7FFF, true);
+      off += 2;
+    }
+  }
+  return new Blob([view], { type: "audio/wav" });
+}
+
+/* ---------------- structure/assembly actions ---------------- */
+async function runSegmentation(assetId) {
+  const a = byId(assetId);
+  if (!a) return;
+  toast("Analyzing structure…");
+  try {
+    const secs = await segmentAsset(assetId);
+    if (!secs) { toast("Couldn't analyze this file"); return; }
+    toast(`Found ${secs.length} sections — confirm or rename`);
+    renderAll(false);
+    pushDirtyToCloud && pushDirtyToCloud().catch(() => {});
+  } catch (e) { toast("Analysis failed"); }
+}
+
+function sectionRef(ref) {
+  const [assetId, secId] = ref.split(":");
+  const a = byId(assetId);
+  const sec = a && a.sections ? a.sections.find(x => x.id === secId) : null;
+  return { a, sec };
+}
+
+async function confirmSection(ref) {
+  const { a, sec } = sectionRef(ref);
+  if (!sec) return;
+  sec.confirmed = true;
+  await persistAsset(a);
+  toast(`${sec.label} confirmed`);
+  renderAll(false);
+}
+
+function renameSectionSheet(ref) {
+  const { sec } = sectionRef(ref);
+  if (!sec) return;
+  state.renamingSection = ref;
+  const common = ["Intro", "Verse", "Pre-Chorus", "Hook", "Chorus", "Bridge", "Outro"];
+  $("#sheet").innerHTML = `<div class="grab"></div>
+    <h3>Rename section</h3>
+    <div class="hint">Currently “${esc(sec.label)}”. Pick a label or type your own — this confirms the section.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px">
+      ${common.map(l => `<button class="btn ${l===sec.label?"gold":""}" data-seclabel="${l}" style="min-height:38px;padding:8px 13px;font-size:13px">${l}</button>`).join("")}
+    </div>
+    <input class="field" id="sec-custom" placeholder="Custom label" value="">
+    <div class="sheet-actions"><button class="btn" data-act="close">Cancel</button>
+      <button class="btn gold" data-act="save-seclabel">Save</button></div>`;
+  openSheet();
+}
+
+async function applySectionLabel(label) {
+  if (!state.renamingSection || !label.trim()) return;
+  const { a, sec } = sectionRef(state.renamingSection);
+  if (!sec) return;
+  sec.label = label.trim();
+  sec.confirmed = true;
+  await persistAsset(a);
+  state.renamingSection = null;
+  closeSheet();
+  toast("Section updated");
+  renderAll(false);
+}
+
+async function playSection(ref) {
+  const { a, sec } = sectionRef(ref);
+  if (!a || !sec) return;
+  if (a.demo) { Player.toggle(a); return; } // demo: just play the generative preview
+  await Player.playRange(a, sec.start, sec.end);
+}
+
+function startAssembly() {
+  const s = song(); if (!s) return;
+  const withSecs = assetsFor(s.id).filter(a => a.sections && a.sections.length);
+  if (!withSecs.length) { toast("Detect sections first"); return; }
+  // Build slots from the master's structure order, defaulting each to the best
+  // available source: prefer the pinned master version, else the latest.
+  const master = byId(s.masterAssetId) || withSecs[0];
+  const order = ["Intro", "Verse", "Pre-Chorus", "Hook", "Chorus", "Bridge", "Outro"];
+  const slices = sectionSlicesFor(s.id);
+  // unique labels present, in canonical order
+  const labels = [...new Set(slices.map(x => x.label))]
+    .sort((a, b) => (order.indexOf(a) === -1 ? 99 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 99 : order.indexOf(b)));
+  const picks = labels.map(label => {
+    // prefer a slice from the master version for this label, else first available
+    const fromMaster = slices.find(x => x.label === label && x.assetId === master.id);
+    const pick = fromMaster || slices.find(x => x.label === label);
+    return { slotId: uid(), label, assetId: pick.assetId, sectionId: pick.sectionId,
+      start: pick.start, end: pick.end, bpm: pick.bpm, keyName: pick.keyName, crossfade: 0.04 };
+  });
+  state.asmRecipe = { songId: s.id, picks };
+  state.structureView = "assemble";
+  renderAll(false);
+}
+
+function swapAssemblySource(index, value) {
+  if (!state.asmRecipe) return;
+  const [assetId, sectionId] = value.split(":");
+  const slice = sectionSlicesFor(state.asmRecipe.songId).find(x => x.assetId === assetId && x.sectionId === sectionId);
+  if (!slice) return;
+  const p = state.asmRecipe.picks[index];
+  Object.assign(p, { assetId: slice.assetId, sectionId: slice.sectionId, start: slice.start, end: slice.end, bpm: slice.bpm, keyName: slice.keyName });
+  renderAll(false);
+}
+
+async function playRecipeSlice(index) {
+  if (!state.asmRecipe) return;
+  const p = state.asmRecipe.picks[index];
+  const a = byId(p.assetId);
+  if (!a) return;
+  if (a.demo) { Player.toggle(a); return; }
+  await Player.playRange(a, p.start, p.end);
+}
+
+async function renderAndDownload() {
+  if (!state.asmRecipe) return;
+  const s = song();
+  const recipe = state.asmRecipe.picks;
+  const v = window.AOSAssembly.validateRecipe(recipe);
+  if (!v.ok) { toast(v.errors[0]); return; }
+  // demo assets can't be truly rendered (no real audio) — be honest about it
+  if (recipe.some(p => { const a = byId(p.assetId); return a && a.demo; })) {
+    toast("Demo versions can't be rendered — import real audio to export");
+    return;
+  }
+  toast("Rendering… this runs entirely on your device");
+  try {
+    const blob = await renderRecipe(recipe, { crossfade: 0.04 });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = (s ? s.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() : "assembled") + "-assembled.wav";
+    a.href = url; a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    record(s.id, "Master", "Assembled",
+      `Rendered a new version from ${recipe.length} sections across takes → ${name}`, false);
+    toast("Downloaded — check your files");
+    renderAll(false);
+  } catch (e) { toast("Render failed: " + (e.message || "unknown")); }
+}
+
 function renderSyncCard() {
   const s = syncState;
   if (s.status !== "on") {
@@ -1080,6 +1379,7 @@ function renderSongView() {
   const p = C.progressOf(s);
   let body = "";
   if (state.songTab === "master") body = renderMaster(s);
+  if (state.songTab === "structure") body = renderStructure(s);
   if (state.songTab === "changes") body = renderEvents(state.events.filter(e => e.songId === s.id), false);
   if (state.songTab === "assets") body = renderAssetCards(assetsFor(s.id), false);
   return `
@@ -1093,7 +1393,7 @@ function renderSongView() {
     <div class="bar" style="margin-top:14px"><i style="width:${p * 100}%"></i></div>
   </div>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <div class="segs">${[["master","Master"],["changes","Changes"],["assets","Assets"]].map(([k, l]) =>
+    <div class="segs">${[["master","Master"],["structure","Structure"],["changes","Changes"],["assets","Assets"]].map(([k, l]) =>
       `<button data-songtab="${k}" class="${state.songTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
     ${versionCount(s.id) >= 2 ? `<button class="btn ghost" data-versioncompare="${s.id}" style="min-height:40px;color:var(--blue)">⚖ Compare versions</button>` : ""}
     <button class="btn ghost" data-act="log-change" style="min-height:40px;color:var(--gold)">＋ Log change</button>
@@ -1117,6 +1417,130 @@ function renderMaster(s) {
       </div>`;
     }).join("") +
     `<button class="btn ghost add-slot" data-act="add-slot">＋ Add slot</button>`;
+}
+
+/* ---------------- STRUCTURE tab: sections + assembly + folders ---------------- */
+function confChip(c) {
+  const cls = c >= 0.7 ? "ok" : c >= 0.5 ? "mid" : "low";
+  const txt = c >= 0.7 ? "likely" : c >= 0.5 ? "maybe" : "guess";
+  return `<span class="sr-conf ${cls}">${txt}</span>`;
+}
+
+function renderStructure(s) {
+  const versions = assetsFor(s.id).filter(a => !a.demo || a.dur);
+  const withSections = versions.filter(a => a.sections && a.sections.length);
+  const sub = state.structureView || "sections";
+
+  let html = `<div class="segs" style="margin-top:4px">${
+    [["sections","Detected sections"],["assemble","Build a version"],["folders","Section folders"]]
+      .map(([k,l]) => `<button data-structview="${k}" class="${sub===k?"on":""}">${l}</button>`).join("")
+  }</div>`;
+
+  if (sub === "sections") {
+    html += `<div class="sec-hint">Artist OS proposes the structure of each version — intro, verse, hook, bridge. It's a starting guess; confirm or rename any section with a tap. Confirmed sections become available to build with.</div>`;
+    if (!versions.length) {
+      html += `<div class="empty"><div class="big">◫</div><b>No versions to analyze yet</b>Import audio for this song first.</div>`;
+      return html;
+    }
+    for (const a of versions) {
+      const secs = a.sections || [];
+      html += `<div class="eyebrow" style="margin-top:16px;display:flex;align-items:center;gap:8px">
+        ${esc(a.title)} ${a.version ? `· ${esc(a.version)}` : ""}
+        ${a.bpm ? `<span class="badge" style="--tint:var(--blue)">${Math.round(a.bpm)} BPM</span>` : ""}
+        ${a.keyName ? `<span class="badge">${esc(a.keyName)}</span>` : ""}</div>`;
+      if (!secs.length) {
+        html += `<button class="btn gold sec-analyze" data-segment="${a.id}">✦ Detect sections in this version</button>`;
+      } else {
+        html += secs.map((sec, i) => `
+          <div class="section-row ${sec.confirmed ? "" : "unconfirmed"}">
+            <div class="sr-time">${C.mmss(sec.start)}–${C.mmss(sec.end)}</div>
+            <div class="sr-label">
+              <div class="sr-name">${esc(sec.label)} ${sec.confirmed ? `<span style="color:var(--green);font-size:12px">✓</span>` : confChip(sec.confidence)}</div>
+              <div class="sr-dur">${Math.round(sec.end - sec.start)}s</div>
+            </div>
+            <div class="sr-actions">
+              <button class="mini play" data-secplay="${a.id}:${sec.id}" aria-label="Preview section">▶</button>
+              <button class="mini" data-secrename="${a.id}:${sec.id}" aria-label="Rename section">✎</button>
+              ${sec.confirmed ? "" : `<button class="mini" data-secconfirm="${a.id}:${sec.id}" aria-label="Confirm section" style="color:var(--green)">✓</button>`}
+            </div>
+          </div>`).join("");
+        html += `<button class="btn ghost" data-segment="${a.id}" style="width:100%;margin-bottom:8px;color:var(--muted)">↻ Re-detect</button>`;
+      }
+    }
+    return html;
+  }
+
+  if (sub === "assemble") {
+    if (withSections.length < 1) {
+      html += `<div class="empty" style="margin-top:20px"><div class="big">✦</div><b>Detect sections first</b>Head to "Detected sections" and analyze at least one version, then build a new version from the pieces you like.</div>`;
+      return html;
+    }
+    const recipe = state.asmRecipe && state.asmRecipe.songId === s.id ? state.asmRecipe.picks : null;
+    if (!recipe) {
+      html += `<div class="asm-intro"><h3>Build a version from your best parts</h3><p>Pick the source version for each section — the verse from one take, the hook from another. Artist OS renders them into one track with smooth crossfades. Mismatched tempo or key is flagged so you choose with eyes open.</p></div>`;
+      html += `<button class="btn gold" data-act="asm-start" style="width:100%">Start from the master structure</button>`;
+      return html;
+    }
+    // render the recipe board
+    const seams = window.AOSAssembly.seamsFor(recipe);
+    const seamAt = new Set(seams.map(x => x.at));
+    const allSlices = sectionSlicesFor(s.id);
+    html += `<div class="asm-intro"><h3>Building a new version</h3><p>Tap a section's source to swap which version it comes from. Preview, then render to a downloadable track.</p></div>`;
+    recipe.forEach((p, i) => {
+      // seam warning before this pick
+      if (seamAt.has(i)) {
+        const seam = seams.find(x => x.at === i);
+        html += `<div class="seam"><span class="s-ic">⚠</span>${seam.issues.map(x => esc(x.detail)).join(" · ")} — cut won't beat-match here</div>`;
+      }
+      const opts = allSlices.filter(sl => sl.label === p.label);
+      html += `<div class="asm-slot">
+        <div class="as-idx mono">${String(i + 1).padStart(2, "0")}</div>
+        <div class="as-body">
+          <div class="as-label">${esc(p.label)}</div>
+          <div class="as-src">${p.bpm ? Math.round(p.bpm) + " BPM · " : ""}${p.keyName ? esc(p.keyName) + " · " : ""}${Math.round(p.end - p.start)}s</div>
+        </div>
+        <button class="as-play" data-asmplay="${i}" aria-label="Preview section">▶</button>
+        <select data-asmsrc="${i}">
+          ${opts.map(o => `<option value="${o.assetId}:${o.sectionId}" ${o.assetId === p.assetId && o.sectionId === p.sectionId ? "selected" : ""}>${esc(o.version)} · ${esc(o.assetTitle)}</option>`).join("")}
+        </select>
+      </div>`;
+    });
+    html += `<div class="asm-total">Total length: ~${C.mmss(window.AOSAssembly.totalDuration(recipe))}${seams.length ? ` · ${seams.length} seam${seams.length>1?"s":""} flagged` : " · clean"}</div>`;
+    html += `<div class="asm-render">
+      <button class="btn ghost" data-act="asm-reset" style="flex:0 0 auto">Reset</button>
+      <button class="btn gold" data-act="asm-render">⬇ Render &amp; download</button>
+    </div>`;
+    return html;
+  }
+
+  if (sub === "folders") {
+    const slices = sectionSlicesFor(s.id);
+    if (!slices.length) {
+      html += `<div class="empty" style="margin-top:20px"><div class="big">🗂</div><b>No sections detected yet</b>Analyze your versions to gather every verse, hook, and bridge across takes into folders here.</div>`;
+      return html;
+    }
+    html += `<div class="sec-hint">Every section across every version, gathered by part. All your choruses in one place — audition them side by side.</div>`;
+    const folders = window.AOSAssembly.unifiedFolders(slices);
+    const open = state.openFolder;
+    html += folders.map(f => `
+      <div class="folder">
+        <button class="folder-head" data-folder="${esc(f.label)}">
+          <div class="fh-ic">${f.label === "Hook" || f.label === "Chorus" ? "★" : "♪"}</div>
+          <div class="fh-name">${esc(f.label)}</div>
+          <div class="fh-count">${f.items.length} across versions</div>
+        </button>
+        ${open === f.label ? `<div class="folder-body">${f.items.map(it => `
+          <div class="folder-item">
+            <button class="fi-play" data-secplay="${it.assetId}:${it.sectionId}" aria-label="Preview">▶</button>
+            <div class="fi-body">
+              <div class="fi-ver">${esc(it.version)} · ${esc(it.assetTitle)}</div>
+              <div class="fi-meta">${C.mmss(it.start)}–${C.mmss(it.end)}${it.bpm ? " · " + Math.round(it.bpm) + " BPM" : ""}${it.keyName ? " · " + esc(it.keyName) : ""}</div>
+            </div>
+          </div>`).join("")}</div>` : ""}
+      </div>`).join("");
+    return html;
+  }
+  return html;
 }
 
 function renderEvents(list, withSong) {
@@ -1399,6 +1823,13 @@ document.addEventListener("click", async e => {
   if (t.dataset.tab) { state.tab = t.dataset.tab; renderAll(); return; }
   if (t.dataset.song) { if (state.tab !== "home" && state.tab !== "songs") state.tab = "home"; state.songId = t.dataset.song; state.songTab = "master"; renderAll(); return; }
   if (t.dataset.songtab) { state.songTab = t.dataset.songtab; renderAll(false); return; }
+  if (t.dataset.structview) { state.structureView = t.dataset.structview; renderAll(false); return; }
+  if (t.dataset.segment) { runSegmentation(t.dataset.segment); return; }
+  if (t.dataset.secconfirm) { confirmSection(t.dataset.secconfirm); return; }
+  if (t.dataset.secrename) { renameSectionSheet(t.dataset.secrename); return; }
+  if (t.dataset.secplay) { e.stopPropagation(); playSection(t.dataset.secplay); return; }
+  if (t.dataset.asmplay) { e.stopPropagation(); playRecipeSlice(+t.dataset.asmplay); return; }
+  if (t.dataset.folder) { state.openFolder = state.openFolder === t.dataset.folder ? null : t.dataset.folder; renderAll(false); return; }
   if (t.id === "back") { state.songId = null; renderAll(); return; }
   if (t.id === "open-import") { importSheet(); return; }
   if (t.dataset.songmenu) { songMenuSheet(t.dataset.songmenu); return; }
@@ -1422,7 +1853,12 @@ document.addEventListener("click", async e => {
   }
   if (act === "add-slot") { textSheet("New master slot", "Adds a structural slot to this song.", "Slot name (e.g. Verse 2)", "save-slot"); return; }
   if (act === "save-slot") { const v = $("#tx-in").value.trim(); if (!v) return; addSlot(v); closeSheet(); renderAll(false); return; }
+  if (t.dataset.seclabel) { applySectionLabel(t.dataset.seclabel); return; }
+  if (act === "save-seclabel") { const v = $("#sec-custom").value.trim(); if (v) applySectionLabel(v); return; }
   if (act === "log-change") { logChangeSheet(); return; }
+  if (act === "asm-start") { startAssembly(); return; }
+  if (act === "asm-reset") { state.asmRecipe = null; renderAll(false); return; }
+  if (act === "asm-render") { renderAndDownload(); return; }
   if (act === "lc-save") {
     record(song().id, $("#lc-target").value, $("#lc-op").value, $("#lc-sum").value.trim() || "Manual entry.");
     closeSheet(); state.songTab = "changes"; renderAll(false); toast("Change logged"); return;
@@ -1522,6 +1958,9 @@ document.addEventListener("change", e => {
     ab[e.target.dataset.abpick] = e.target.value;
     ab.kind === "master" ? versionCompareSheet(ab.songId) : compareSheet(ab.slot);
   }
+  if (e.target.dataset && e.target.dataset.asmsrc != null) {
+    swapAssemblySource(+e.target.dataset.asmsrc, e.target.value);
+  }
 });
 $("#scrim").addEventListener("click", () => { if (!state.importing) closeSheet(); });
 $("#np-play").addEventListener("click", () => { Player.playing() ? Player.pause() : Player.resume(); });
@@ -1570,6 +2009,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
 window.__AOS = {
   state, importFiles, loadDemo, record, resolveDecision,
   enableSync, linkStart, linkClaim, pushDirtyToCloud, pullFromCloud, uploadAssetToCloud,
+  renderAll, segmentAsset, renderRecipe, startAssembly, renderAndDownload,
   get syncState() { return syncState; }
 };
 })();
