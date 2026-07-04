@@ -70,8 +70,22 @@ final class AppStateSyncTests: XCTestCase {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false,
                              sync: SyncService(client: fake, defaults: freshDefaults()))
+        state.createSong(title: "Dirty Tracking Song")
         await state.enableSync()
         let requestCount = await fake.recorded.count
-        XCTAssertEqual(requestCount, 2, "account creation + one push containing the (empty) catalog snapshot")
+        XCTAssertEqual(requestCount, 2, "account creation + one push containing the song just created")
+    }
+
+    func testEnablingSyncWithATrulyEmptyCatalogSendsNoPushRequest() async throws {
+        // Pushing zero changes should make zero network calls — confirms
+        // the batching loop doesn't fire an empty request for an empty diff.
+        let fake = FakeHTTPClient(script: [.init(json: ["accountId": "acc1", "token": "tok1"], status: 201)])
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false,
+                             sync: SyncService(client: fake, defaults: freshDefaults()))
+        await state.enableSync()
+        XCTAssertEqual(state.syncStatus, .on)
+        let requestCount = await fake.recorded.count
+        XCTAssertEqual(requestCount, 1, "only the account-creation request, no push for an empty catalog")
     }
 }
