@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src blob:; img-src 'self' data:; connect-src 'self' https://artist-os-sync.astickley9.workers.dev; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#070810">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Artist OS — your catalog organized around songs, not files. Local-first: your audio never leaves this device.">
+<title>Artist OS</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <button id="back" aria-label="Back to songs">‹ Songs</button>
+    <div class="brand">ARTIST<span class="os"> OS</span></div>
+    <div class="env-pill" id="env-pill">Local-first</div>
+    <button class="kebab" id="open-import" aria-label="Import audio" title="Import audio">＋</button>
+  </header>
+
+  <main id="main">
+    <aside id="desk-list"></aside>
+    <section id="view" aria-live="polite"></section>
+  </main>
+
+  <div id="np" role="region" aria-label="Now playing">
+    <button class="play" id="np-play" aria-label="Play or pause">▶</button>
+    <div class="info">
+      <div class="ttl" id="np-title"></div>
+      <div class="ssub" id="np-sub"></div>
+    </div>
+    <time class="mono" id="np-cur">0:00</time>
+    <div class="track" id="np-track"><div class="bar"><i id="np-fill"></i></div></div>
+    <time class="mono" id="np-dur">0:00</time>
+    <button id="np-stop" aria-label="Stop">✕</button>
+  </div>
+
+  <nav id="tabs" aria-label="Primary">
+    <button data-tab="home" class="on"><span class="ic">◎</span>Home</button>
+    <button data-tab="songs"><span class="ic">♪</span>Songs</button>
+    <button data-tab="timeline"><span class="ic">⏱</span>Timeline</button>
+    <button data-tab="assets"><span class="ic">▦</span>Assets</button>
+    <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
+  </nav>
+
+  <div id="scrim"></div>
+  <div id="sheet" role="dialog" aria-modal="true"></div>
+  <div id="toast" role="status"></div>
+
+  <input type="file" id="pick-folder" webkitdirectory multiple hidden>
+  <input type="file" id="pick-files" accept="audio/*,.m4a,.wav,.aif,.aiff,.mp3,.flac,.caf,.ogg,.aac" multiple hidden>
+</div>
+<script src="core.js"></script>
+<script src="audio-intel.js"></script>
+<script src="sync.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

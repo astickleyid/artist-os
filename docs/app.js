@@ -60,8 +60,8 @@ function dbGet(store, key) {
 /* ============================ state ============================ */
 const state = {
   songs: [], assets: [], events: [],
-  tab: "songs", songId: null, songTab: "master",
-  npAsset: null, importing: null, watchStatus: null
+  tab: "home", songId: null, songTab: "master",
+  npAsset: null, importing: null, watchStatus: null, lastSeenHome: 0
 };
 const song = () => state.songs.find(s => s.id === state.songId);
 const byId = id => state.assets.find(a => a.id === id);
@@ -965,26 +965,105 @@ function renderOnboard() {
   </div>`;
 }
 
-function renderDecideInbox() {
-  const list = allDecisions();
-  if (!list.length) return "";
-  return `<div class="eyebrow" style="color:var(--gold)">Decide · ${list.length}</div>` + list.map(d => `
-    <button class="card panel" data-decision="${d.kind}" data-dsong="${d.songId}" ${d.slotId ? `data-dslot="${d.slotId}"` : ""}
-      style="margin-bottom:10px;border-color:color-mix(in srgb,var(--gold) 38%,transparent)">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span style="font-size:17px">⚖️</span>
-        <div style="flex:1;min-width:0">
-          <div class="row-title" style="font-size:14px">${esc(d.title)}</div>
-          <div class="sub" style="margin-top:2px">${esc(d.detail)}</div>
-        </div>
-        <span class="badge">A/B</span>
+function decideCard(d) {
+  const kicker = d.kind === "master" ? "Pick the master" : "Competing takes";
+  return `<button class="decide-card" data-decision="${d.kind}" data-dsong="${d.songId}" ${d.slotId ? `data-dslot="${d.slotId}"` : ""}>
+    <div class="dc-top">
+      <div class="dc-icon">⚖</div>
+      <div class="dc-body">
+        <div class="dc-kicker">${kicker}</div>
+        <div class="dc-title">${esc(d.title)}</div>
+        <div class="dc-detail">${esc(d.detail)}</div>
       </div>
-    </button>`).join("") + `<div style="height:8px"></div>`;
+    </div>
+    <div class="dc-cta">Compare & decide →</div>
+  </button>`;
 }
 
-function renderSongs() {
+function happenedRow(e) {
+  const s = state.songs.find(x => x.id === e.songId);
+  return `<div class="happened">
+    <div class="hp-dot"></div>
+    <div class="hp-body">
+      <div class="hp-sum">${esc(e.summary)}</div>
+      <div class="hp-meta">${s ? `<span class="sng">${esc(s.title)}</span>` : ""}<span>${C.agoFrom(now(), e.t)}</span></div>
+    </div>
+  </div>`;
+}
+
+function motionCard(m) {
+  const s = m.song;
+  const p = C.progressOf(s);
+  const vc = versionCount(s.id);
+  const lastTouch = m.lastTouch ? C.agoFrom(now(), m.lastTouch) : "";
+  return `<button class="motion-card" data-song="${s.id}">
+    <div class="mc-top">
+      <div class="mc-grow">
+        <div class="mc-title">${esc(s.title)}</div>
+        <div class="mc-meta">${esc(s.status)} · ${vc >= 2 ? vc + " versions · " : ""}${assetsFor(s.id).length} assets</div>
+      </div>
+      ${m.needsYou ? `<span class="mc-needs">Needs you</span>` : (lastTouch ? `<span class="mc-when">${lastTouch}</span>` : "")}
+    </div>
+    <div class="mc-bar"><i style="width:${p * 100}%"></i></div>
+  </button>`;
+}
+
+function renderHome() {
   if (!state.songs.length) return renderOnboard();
-  return watchBanner() + renderDecideInbox() + `<div class="eyebrow">Songs</div>` + state.songs.map(s => songCard(s)).join("") +
+  // Freeze the "just happened" cutoff once per session (on first Home paint)
+  // so re-renders within the session don't wipe the feed; it advances only
+  // when the session's marker is committed below.
+  if (state.homeCutoff == null) state.homeCutoff = state.lastSeenHome || 0;
+  const feed = C.buildHomeFeed(state.songs, state.assets, state.events, {
+    now: now(), lastSeen: state.homeCutoff, recentLimit: 6
+  });
+
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? "Late night" : hour < 12 ? "Good morning" : hour < 18 ? "Afternoon" : "Evening";
+  const decisionsWord = feed.counts.decisions === 1 ? "decision" : "decisions";
+
+  let html = watchBanner();
+  html += `<div class="home-head">
+    <div class="home-greeting">${greeting}, STICK</div>
+    <div class="home-sub">${feed.counts.decisions
+      ? `<b>${feed.counts.decisions} ${decisionsWord}</b> waiting · ${feed.counts.songs} songs in your catalog`
+      : `Everything's decided · ${feed.counts.songs} songs in your catalog`}</div>
+  </div>`;
+
+  // 1) NEEDS YOU
+  html += `<div class="home-sec"><span class="h gold">Needs you</span>${feed.counts.decisions ? `<span class="count">${feed.counts.decisions}</span>` : ""}<span class="rule"></span></div>`;
+  if (feed.decisions.length) {
+    html += feed.decisions.map(decideCard).join("");
+  } else {
+    html += `<div class="all-clear">
+      <div class="ac-icon">✓</div>
+      <div class="ac-txt"><b>All clear</b><div>No decisions pending. Keep making.</div></div>
+    </div>`;
+  }
+
+  // 2) JUST HAPPENED (only if there's anything new)
+  if (feed.recentEvents.length) {
+    html += `<div class="home-sec"><span class="h green">Just happened</span><span class="rule"></span></div>`;
+    html += feed.recentEvents.map(happenedRow).join("");
+  }
+
+  // 3) IN MOTION
+  html += `<div class="home-sec"><span class="h muted">In motion</span><span class="rule"></span></div>`;
+  html += feed.inMotion.map(motionCard).join("");
+  html += `<button class="btn ghost home-add" data-act="new-song">＋ New song</button>`;
+
+  // Persist "seen up to now" so the NEXT session's feed starts fresh, while
+  // the current session keeps showing this batch (homeCutoff stays frozen).
+  state.lastSeenHome = now();
+  dbPut("kv", { key: "lastSeenHome", value: state.lastSeenHome }).catch(() => {});
+
+  return html;
+}
+
+function renderSongsList() {
+  if (!state.songs.length) return renderOnboard();
+  return `<div class="eyebrow">All songs · ${state.songs.length}</div>` +
+    state.songs.map(s => songCard(s)).join("") +
     `<button class="btn ghost add-slot" data-act="new-song">＋ New song</button>`;
 }
 
@@ -1099,12 +1178,13 @@ function renderSettings() {
 
 function renderAll(scroll = true) {
   const v = $("#view");
-  if (state.tab === "songs") v.innerHTML = state.songId && song() ? renderSongView() : renderSongs();
+  if (state.tab === "home") v.innerHTML = state.songId && song() ? renderSongView() : renderHome();
+  if (state.tab === "songs") v.innerHTML = state.songId && song() ? renderSongView() : renderSongsList();
   if (state.tab === "timeline") v.innerHTML = renderEvents([...state.events].sort((a, b) => b.t - a.t), true);
   if (state.tab === "assets") v.innerHTML = renderAssetCards([...state.assets].sort((a, b) => b.created - a.created), true);
   if (state.tab === "settings") v.innerHTML = renderSettings();
   $("#desk-list").innerHTML = state.songs.length ? `<div class="eyebrow">Catalog</div>` + state.songs.map(s => songCard(s, true)).join("") : "";
-  $("#back").classList.toggle("show", state.tab === "songs" && !!state.songId);
+  $("#back").classList.toggle("show", (state.tab === "home" || state.tab === "songs") && !!state.songId);
   $$("nav#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === state.tab));
   drawWaves($("#view"));
   renderNP();
@@ -1317,7 +1397,7 @@ document.addEventListener("click", async e => {
 
   if (t.dataset.play) { e.stopPropagation(); Player.toggle(byId(t.dataset.play)); if ($("#sheet").classList.contains("show") && ab) compareSheet(ab.slot); return; }
   if (t.dataset.tab) { state.tab = t.dataset.tab; renderAll(); return; }
-  if (t.dataset.song) { state.tab = "songs"; state.songId = t.dataset.song; state.songTab = "master"; renderAll(); return; }
+  if (t.dataset.song) { if (state.tab !== "home" && state.tab !== "songs") state.tab = "home"; state.songId = t.dataset.song; state.songTab = "master"; renderAll(); return; }
   if (t.dataset.songtab) { state.songTab = t.dataset.songtab; renderAll(false); return; }
   if (t.id === "back") { state.songId = null; renderAll(); return; }
   if (t.id === "open-import") { importSheet(); return; }
@@ -1475,6 +1555,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
   state.songs = songs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   state.assets = assets;
   state.events = events.sort((a, b) => b.t - a.t);
+  const seen = await dbGet("kv", "lastSeenHome").catch(() => null);
+  state.lastSeenHome = seen && seen.value ? seen.value : 0;
   await restoreFolder().catch(() => {});
   runDecisionEngine();
   renderAll();

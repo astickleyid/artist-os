@@ -298,6 +298,65 @@
     return out;
   }
 
+  /* -------- home feed: focus-ordered "what needs you / what happened / what's moving"
+     Modeled on Linear's My Issues focus order (urgent -> blockers -> active -> rest)
+     and Frame.io's status-driven surfacing. Pure + deterministic for testing. -------- */
+
+  // Momentum score for a song: recency-weighted signal of active work.
+  function songMomentum(song, assets, events, nowTs) {
+    const songAssets = assets.filter(a => a.songId === song.id);
+    const songEvents = events.filter(e => e.songId === song.id);
+    const lastEventTs = songEvents.reduce((m, e) => Math.max(m, e.t || 0), 0);
+    const lastAssetTs = songAssets.reduce((m, a) => Math.max(m, a.modifiedAt || a.created || 0), 0);
+    const lastTouch = Math.max(lastEventTs, lastAssetTs);
+    const ageMs = Math.max(0, nowTs - lastTouch);
+    const dayMs = 86400000;
+    // exponential-ish recency: 1.0 today, ~0.5 at a week, trailing off after
+    const recency = lastTouch === 0 ? 0 : 1 / (1 + ageMs / (dayMs * 7));
+    return { lastTouch, recency };
+  }
+
+  // Build the whole home feed as ordered sections. Returns a plain structure
+  // the UI renders; no DOM, no side effects.
+  function buildHomeFeed(songs, assets, events, opts) {
+    opts = opts || {};
+    const nowTs = opts.now || Date.now();
+    const lastSeenTs = opts.lastSeen || 0;
+
+    // 1) NEEDS YOU — every pending decision across the catalog.
+    const decisions = songs.flatMap(s => decisionsFor(s, assets.filter(a => a.songId === s.id)));
+
+    // 2) JUST HAPPENED — observed/auto events since last seen (the "it works for
+    //    me" signal). Cap to keep it glanceable.
+    const recentEvents = events
+      .filter(e => (e.t || 0) > lastSeenTs)
+      .sort((a, b) => (b.t || 0) - (a.t || 0))
+      .slice(0, opts.recentLimit || 6);
+
+    // 3) IN MOTION — songs ordered by momentum (recent activity first), with
+    //    the ones that have pending decisions floated up within the list.
+    const decisionSongIds = new Set(decisions.map(d => d.songId));
+    const inMotion = songs
+      .map(s => ({ song: s, ...songMomentum(s, assets, events, nowTs), needsYou: decisionSongIds.has(s.id) }))
+      .sort((a, b) => {
+        if (a.needsYou !== b.needsYou) return a.needsYou ? -1 : 1;
+        if (b.recency !== a.recency) return b.recency - a.recency;
+        return (b.lastTouch || 0) - (a.lastTouch || 0);
+      });
+
+    return {
+      decisions,
+      recentEvents,
+      inMotion,
+      counts: {
+        decisions: decisions.length,
+        recent: recentEvents.length,
+        songs: songs.length,
+        assets: assets.length
+      }
+    };
+  }
+
   g.AOSCore = {
     ROLES, STATES, OPS, TARGETS, AUDIO_EXT,
     extOf, isAudioName, titleize, inferRole, groupForPath,
@@ -305,6 +364,7 @@
     progressOf, riskOf, applyAssign, applyState,
     partitionDuplicates, defaultSections, mmss, agoFrom,
     parseVersion, clusterByCanonical, isVersionToken,
-    sortVersions, versionStack, masterStack, applyAutoDecisions, decisionsFor, DECISIVE_ROLES
+    sortVersions, versionStack, masterStack, applyAutoDecisions, decisionsFor, DECISIVE_ROLES,
+    songMomentum, buildHomeFeed
   };
 })(typeof window !== "undefined" ? window : globalThis);

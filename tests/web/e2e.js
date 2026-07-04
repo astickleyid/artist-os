@@ -38,7 +38,7 @@ const server = http.createServer((req, res) => {
 
   const assert = (cond, msg) => { if (!cond) throw new Error('ASSERT FAIL: ' + msg); console.log('  ✓ ' + msg); };
 
-  await page.goto('http://localhost:8931/');
+  await page.goto('http://localhost:8931/app.html');
   await page.waitForTimeout(600);
   assert(await page.locator('.onboard').count() === 1, 'onboarding shows on empty catalog');
 
@@ -144,9 +144,9 @@ const server = http.createServer((req, res) => {
   assert(np.shown && np.playing, 'now-playing bar active with real audio');
 
   // Decision engine D2: 6-version stack -> Decide card; pin master resolves it
-  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.locator('nav#tabs [data-tab="home"]').click();
   await page.evaluate(() => { window.__AOS.state.songId = null; });
-  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.locator('nav#tabs [data-tab="home"]').click();
   await page.waitForSelector('[data-decision="master"]');
   assert(await page.locator('[data-decision="master"]').count() >= 1, 'Decide inbox shows master decision for version stack');
   await page.locator('[data-decision="master"]').first().click();
@@ -162,7 +162,7 @@ const server = http.createServer((req, res) => {
   assert(pinned.master, 'master pinned on song');
   assert(pinned.event, 'pin event recorded');
   await page.evaluate(() => { window.__AOS.state.songId = null; });
-  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.locator('nav#tabs [data-tab="home"]').click();
   assert(await page.locator('[data-decision="master"]').count() === 0, 'master decision resolved after pinning');
 
   // Decision engine D1: second hook file auto-flags the Hook slot
@@ -181,7 +181,7 @@ const server = http.createServer((req, res) => {
   assert(d1.hookState === 'needsDecision', 'Hook slot auto-escalated by competing takes (got ' + d1.hookState + ')');
   assert(d1.autoEvent, 'auto-flag event recorded as observed');
   await page.evaluate(() => { window.__AOS.state.songId = null; });
-  await page.locator('nav#tabs [data-tab="songs"]').click();
+  await page.locator('nav#tabs [data-tab="home"]').click();
   assert(await page.locator('[data-decision="slot"]').count() >= 1, 'Decide inbox shows the slot decision');
 
   // Persistence: reload and confirm everything survived IndexedDB round-trip
@@ -251,7 +251,7 @@ const server = http.createServer((req, res) => {
   const context2 = await browser.newContext();
   const page2 = await context2.newPage();
   await page2.route('https://artist-os-sync.astickley9.workers.dev/**', routeToWorker); // SAME workerEnv = same backend
-  await page2.goto('http://localhost:8931/');
+  await page2.goto('http://localhost:8931/app.html');
   await page2.evaluate(() => { window.__AOS.state.songs = []; }); // sanity: device 2 starts empty (fresh IndexedDB anyway)
 
   const linkInfo = await page.evaluate(async () => window.__AOS.linkStart());

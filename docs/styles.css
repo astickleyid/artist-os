@@ -221,3 +221,88 @@ textarea.field{min-height:76px;resize:vertical;font-family:inherit}
 .storage-pill{font-size:10px;color:var(--muted)}
 .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .8s linear infinite;display:inline-block;vertical-align:-3px}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ================= HOME (focus-ordered feed) ================= */
+.home-head{margin:2px 0 20px}
+.home-greeting{font-size:26px;font-weight:900;letter-spacing:-.04em;line-height:1.1}
+.home-sub{font-size:13px;color:var(--muted);margin-top:5px}
+.home-sub b{color:var(--text);font-weight:700}
+
+/* section headers within home */
+.home-sec{margin:26px 0 12px;display:flex;align-items:center;gap:9px}
+.home-sec:first-of-type{margin-top:8px}
+.home-sec .h{font-size:12px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}
+.home-sec .h.gold{color:var(--gold)}
+.home-sec .h.green{color:var(--green)}
+.home-sec .h.muted{color:var(--muted)}
+.home-sec .count{font-size:11px;font-weight:800;color:var(--muted);background:rgba(255,255,255,.05);border-radius:999px;padding:2px 9px;min-width:22px;text-align:center}
+.home-sec .rule{flex:1;height:1px;background:var(--line)}
+
+/* the hero decision card — this is an ACTION, styled to feel like one */
+.decide-card{
+  display:block;width:100%;text-align:left;padding:16px;margin-bottom:10px;border-radius:16px;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--gold) 12%,var(--panel)),var(--panel));
+  border:1px solid color-mix(in srgb,var(--gold) 38%,transparent);
+  position:relative;overflow:hidden;transition:transform .1s,border-color .2s;
+}
+.decide-card:active{transform:scale(.985)}
+@media(hover:hover){.decide-card:hover{border-color:color-mix(in srgb,var(--gold) 60%,transparent)}}
+.decide-card .dc-top{display:flex;align-items:center;gap:12px}
+.decide-card .dc-icon{
+  width:40px;height:40px;min-width:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+  font-size:19px;background:color-mix(in srgb,var(--gold) 16%,transparent);color:var(--gold-bright)
+}
+.decide-card .dc-body{flex:1;min-width:0}
+.decide-card .dc-kicker{font-size:10.5px;font-weight:900;letter-spacing:.09em;text-transform:uppercase;color:var(--gold);margin-bottom:3px}
+.decide-card .dc-title{font-weight:800;font-size:15.5px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.decide-card .dc-detail{font-size:12.5px;color:var(--muted);margin-top:2px}
+.decide-card .dc-cta{
+  display:flex;align-items:center;justify-content:center;gap:6px;margin-top:13px;
+  font-weight:800;font-size:13.5px;color:#14100a;background:var(--gold);
+  border-radius:11px;padding:11px;min-height:42px
+}
+
+/* "all clear" state when no decisions pending */
+.all-clear{
+  display:flex;align-items:center;gap:13px;padding:16px;border-radius:16px;margin-bottom:10px;
+  background:color-mix(in srgb,var(--green) 8%,var(--panel));
+  border:1px solid color-mix(in srgb,var(--green) 24%,transparent);
+}
+.all-clear .ac-icon{width:38px;height:38px;border-radius:11px;background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);display:flex;align-items:center;justify-content:center;font-size:18px}
+.all-clear .ac-txt b{font-weight:800;font-size:14.5px}
+.all-clear .ac-txt div{font-size:12.5px;color:var(--muted);margin-top:2px}
+
+/* just-happened feed row — compact, observed-tinted */
+.happened{
+  display:flex;gap:11px;align-items:flex-start;padding:12px 13px;margin-bottom:8px;border-radius:13px;
+  background:var(--panel);border:1px solid var(--line);
+  animation:slidein .35s cubic-bezier(.2,1,.3,1);
+}
+.happened .hp-dot{width:7px;height:7px;border-radius:50%;margin-top:6px;flex-shrink:0;background:var(--green);box-shadow:0 0 7px var(--green)}
+.happened .hp-body{flex:1;min-width:0}
+.happened .hp-sum{font-size:13.5px;line-height:1.4}
+.happened .hp-meta{font-size:11px;color:var(--muted);margin-top:3px;display:flex;gap:7px}
+.happened .hp-meta .sng{color:var(--gold);font-weight:700}
+
+/* in-motion song row — richer than the old card */
+.motion-card{
+  display:block;width:100%;text-align:left;padding:15px;margin-bottom:10px;border-radius:16px;
+  background:var(--panel);border:1px solid var(--line);transition:transform .1s,border-color .15s,background .15s;
+}
+.motion-card:active{transform:scale(.99)}
+@media(hover:hover){.motion-card:hover{background:var(--raised);border-color:rgba(255,255,255,.16)}}
+.motion-card .mc-top{display:flex;align-items:flex-start;gap:11px}
+.motion-card .mc-grow{flex:1;min-width:0}
+.motion-card .mc-title{font-weight:800;font-size:16px;letter-spacing:-.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.motion-card .mc-meta{font-size:12px;color:var(--muted);margin-top:3px}
+.motion-card .mc-needs{
+  font-size:10.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:var(--gold);
+  background:color-mix(in srgb,var(--gold) 13%,transparent);border:1px solid color-mix(in srgb,var(--gold) 28%,transparent);
+  border-radius:999px;padding:4px 9px;white-space:nowrap
+}
+.motion-card .mc-when{font-size:11px;color:var(--muted);white-space:nowrap}
+.motion-card .mc-bar{height:5px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:12px}
+.motion-card .mc-bar>i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--gold),var(--gold-bright));transition:width .4s cubic-bezier(.3,1.3,.4,1)}
+
+/* home quick-add when catalog exists */
+.home-add{width:100%;justify-content:center;margin-top:6px;color:var(--muted);border-style:dashed}
