@@ -59,6 +59,10 @@ Sources/ArtistOS/
 └── Services/
 ```
 
+## Web app (real product)
+
+`docs/` is a local-first web version of Artist OS, deployed at https://astickleyid.github.io/artist-os/ — not a demo. Real folder/file import (subfolders become songs), IndexedDB persistence including your audio, real playback and decoded waveforms, SHA-256 dedup, A/B decisions, the full change log, and — on Chrome/Edge — persistent folder connection with auto-watch and reconciliation. Strict CSP, zero backend: audio never leaves the device. Tested with Node unit tests (`tests/web/core.test.js`) and a Playwright e2e (`tests/web/e2e.js`) covering import, dedup, assignment, playback, and persistence across reload.
+
 ## Data
 
 Catalog database lives at `~/Library/Application Support/ArtistOS/catalog.sqlite`. First launch seeds a demo song; imports add real data alongside it.
