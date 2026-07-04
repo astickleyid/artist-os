@@ -24,6 +24,9 @@ final class AppState: ObservableObject {
     @Published var watchedFolders: [WatchedFolder] = []
 
     let audio = AudioPreviewService()
+    let sync: SyncService
+    @Published var syncStatus: SyncStatus = .off
+    @Published var syncLastError: String?
 
     private let store: CatalogStore
     private let watchService = FolderWatchService()
@@ -32,9 +35,15 @@ final class AppState: ObservableObject {
     private var watchDebounceTask: Task<Void, Never>?
     private let logger = Logger(subsystem: "com.stickley.artistos", category: "AppState")
     private static let seedKey = "aos.didSeedMockCatalog"
+    private var dirtyEntities: [String: (kind: SyncLogic.Kind, id: String, deleted: Bool)] = [:]
+    private var pushDebounceTask: Task<Void, Never>?
 
-    init(store: CatalogStore = .makeDefault(), seedIfNeeded: Bool = true, enableWatching: Bool = true) {
+    enum SyncStatus { case off, on }
+
+    init(store: CatalogStore = .makeDefault(), seedIfNeeded: Bool = true, enableWatching: Bool = true,
+         sync: SyncService = SyncService()) {
         self.store = store
+        self.sync = sync
         if seedIfNeeded, store.isEmpty, !UserDefaults.standard.bool(forKey: Self.seedKey) {
             store.seed(MockCatalog.make())
             UserDefaults.standard.set(true, forKey: Self.seedKey)
@@ -44,6 +53,13 @@ final class AppState: ObservableObject {
         watchedFolders = store.watchedFolders()
         runDecisionEngine()
         queueAnalysis()
+        Task { [weak self] in
+            guard let self else { return }
+            if await self.sync.isEnabled {
+                self.syncStatus = .on
+                try? await self.pullFromCloud()
+            }
+        }
 
         if enableWatching {
             watchService.onChanges = { [weak self] paths in
@@ -266,6 +282,7 @@ final class AppState: ObservableObject {
         catalog.events.append(event)
         do { try store.append(event: event) }
         catch { logger.error("Failed to persist event: \(error.localizedDescription)") }
+        markDirty(.event, event.id.uuidString)
     }
 
     // MARK: - Import
@@ -328,8 +345,7 @@ final class AppState: ObservableObject {
             for var asset in dedup.unique {
                 asset.songID = targetSongID
                 catalog.assets.append(asset)
-                do { try store.insert(asset: asset) }
-                catch { logger.error("Failed to persist asset: \(error.localizedDescription)") }
+                persistAsset(asset)
                 newAssets += 1
                 record(songID: targetSongID, target: target(forRole: asset.role),
                        operation: .imported, after: asset.id,
@@ -374,9 +390,165 @@ final class AppState: ObservableObject {
             }
             guard let liveIndex = catalog.assets.firstIndex(where: { $0.id == asset.id }) else { continue }
             catalog.assets[liveIndex] = updated
-            do { try store.insert(asset: updated) }
-            catch { logger.error("Failed to persist analysis: \(error.localizedDescription)") }
+            persistAsset(updated)
             try? await Task.sleep(nanoseconds: 80_000_000)
+        }
+    }
+
+    // MARK: - Sync (Cloudflare; VISION.md: metadata-first, audio opt-in)
+
+    private func markDirty(_ kind: SyncLogic.Kind, _ id: String, deleted: Bool = false) {
+        dirtyEntities[kind.rawValue + ":" + id] = (kind, id, deleted)
+        guard syncStatus == .on else { return }
+        pushDebounceTask?.cancel()
+        pushDebounceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.pushDirtyToCloud()
+        }
+    }
+
+    private func pushDirtyToCloud() async {
+        guard syncStatus == .on, !dirtyEntities.isEmpty else { return }
+        let items = Array(dirtyEntities.values)
+        dirtyEntities.removeAll()
+        let changes: [SyncLogic.JSONDict] = items.compactMap { item in
+            if item.deleted { return SyncLogic.tombstone(kind: item.kind, id: item.id) }
+            switch item.kind {
+            case .song:
+                guard let uuid = UUID(uuidString: item.id), let s = catalog.songs.first(where: { $0.id == uuid })
+                else { return nil }
+                return SyncLogic.change(forSong: s)
+            case .asset:
+                guard let uuid = UUID(uuidString: item.id), let a = catalog.assets.first(where: { $0.id == uuid })
+                else { return nil }
+                return SyncLogic.change(forAsset: a)
+            case .event:
+                guard let uuid = UUID(uuidString: item.id), let e = catalog.events.first(where: { $0.id == uuid })
+                else { return nil }
+                return SyncLogic.change(forEvent: e)
+            }
+        }
+        guard !changes.isEmpty else { return }
+        do {
+            _ = try await sync.push(changes: changes)
+            syncLastError = nil
+        } catch {
+            syncLastError = error.localizedDescription
+            for item in items { dirtyEntities[item.kind.rawValue + ":" + item.id] = item } // retry next cycle
+        }
+    }
+
+    private func pushEntireCatalogToCloud() async throws {
+        let changes = catalog.songs.map(SyncLogic.change(forSong:))
+            + catalog.assets.map(SyncLogic.change(forAsset:))
+            + catalog.events.map(SyncLogic.change(forEvent:))
+        _ = try await sync.push(changes: changes)
+    }
+
+    func enableSync() async {
+        do {
+            _ = try await sync.enableSync()
+            syncStatus = .on
+            syncLastError = nil
+            try await pushEntireCatalogToCloud()
+        } catch {
+            syncLastError = error.localizedDescription
+        }
+    }
+
+    func startDeviceLink() async throws -> (code: String, expiresInSeconds: Int) {
+        if syncStatus != .on { await enableSync() }
+        return try await sync.linkStart()
+    }
+
+    func claimDeviceLink(code: String) async {
+        do {
+            _ = try await sync.linkClaim(code: code)
+            syncStatus = .on
+            syncLastError = nil
+            try await pullFromCloud()
+        } catch {
+            syncLastError = error.localizedDescription
+        }
+    }
+
+    func pullFromCloud() async throws {
+        let changes = try await sync.pullAll()
+        for change in changes {
+            guard let kindRaw = change["kind"] as? String, let kind = SyncLogic.Kind(rawValue: kindRaw),
+                  let idString = change["id"] as? String,
+                  let updatedAtMs = (change["updatedAt"] as? NSNumber)?.doubleValue
+            else { continue }
+            let deleted = (change["deleted"] as? Bool) ?? false
+            let remoteDate = SyncLogic.date(fromMs: updatedAtMs)
+
+            switch kind {
+            case .song:
+                guard let uuid = UUID(uuidString: idString) else { continue }
+                let idx = catalog.songs.firstIndex(where: { $0.id == uuid })
+                if deleted { if let idx { catalog.songs.remove(at: idx) }; continue }
+                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
+                    overLocal: idx.map { catalog.songs[$0].updatedAt } ?? .distantPast) else { continue }
+                guard let payload = change["data"] as? SyncLogic.JSONDict,
+                      let merged = SyncLogic.mergedSong(payload: payload, updatedAt: remoteDate,
+                        existing: idx.map { catalog.songs[$0] })
+                else { continue }
+                if let idx { catalog.songs[idx] = merged } else { catalog.songs.append(merged) }
+                try? store.upsert(song: merged)
+
+            case .asset:
+                guard let uuid = UUID(uuidString: idString) else { continue }
+                let idx = catalog.assets.firstIndex(where: { $0.id == uuid })
+                if deleted { if let idx { catalog.assets.remove(at: idx) }; continue }
+                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
+                    overLocal: idx.map { catalog.assets[$0].updatedAt } ?? .distantPast) else { continue }
+                guard let payload = change["data"] as? SyncLogic.JSONDict,
+                      let merged = SyncLogic.mergedAsset(payload: payload, updatedAt: remoteDate,
+                        existing: idx.map { catalog.assets[$0] })
+                else { continue }
+                if let idx { catalog.assets[idx] = merged } else { catalog.assets.append(merged) }
+                try? store.insert(asset: merged)
+
+            case .event:
+                guard let uuid = UUID(uuidString: idString) else { continue }
+                if deleted { catalog.events.removeAll { $0.id == uuid }; continue }
+                guard !catalog.events.contains(where: { $0.id == uuid }),
+                      let payload = change["data"] as? SyncLogic.JSONDict,
+                      let songIdString = payload["songId"] as? String, let songID = UUID(uuidString: songIdString),
+                      let targetRaw = payload["target"] as? String, let target = EventTarget(rawValue: targetRaw),
+                      let opRaw = payload["op"] as? String, let operation = EventOperation(rawValue: opRaw),
+                      let summary = payload["summary"] as? String
+                else { continue }
+                let confidence = (payload["confidence"] as? NSNumber)?.doubleValue ?? 1.0
+                let event = CreativeEvent(id: uuid, songID: songID, timestamp: remoteDate, target: target,
+                                          operation: operation, beforeAssetID: nil, afterAssetID: nil,
+                                          summary: summary, confidence: confidence)
+                catalog.events.append(event)
+                try? store.append(event: event)
+            }
+        }
+        runDecisionEngine()
+    }
+
+    /// Uploads one asset's local audio so it's available on every synced
+    /// device. Opt-in per VISION.md — most audio stays local-only.
+    func uploadAssetToCloud(_ assetID: UUID) async {
+        guard let index = catalog.assets.firstIndex(where: { $0.id == assetID }),
+              let url = AssetFileResolver.url(for: catalog.assets[index])
+        else { syncLastError = "No local audio to upload."; return }
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            if syncStatus != .on { await enableSync() }
+            try await sync.uploadBlob(assetID: assetID.uuidString, data: data,
+                                       contentType: "audio/\(url.pathExtension)")
+            catalog.assets[index].cloudKey = assetID.uuidString
+            persistAsset(catalog.assets[index])
+            syncLastError = nil
+        } catch {
+            syncLastError = error.localizedDescription
         }
     }
 
@@ -429,7 +601,7 @@ final class AppState: ObservableObject {
                 catalog.assets[index].version = parsed.label
                 catalog.assets[index].vOrder = parsed.order
                 taggedCount += 1
-                try? store.insert(asset: catalog.assets[index])
+                persistAsset(catalog.assets[index])
             }
             guard let homeID = asset.songID,
                   let home = catalog.songs.first(where: { $0.id == homeID }),
@@ -451,7 +623,7 @@ final class AppState: ObservableObject {
                        summary: "\(song.title) created during filename re-analysis.")
             }
             catalog.assets[index].songID = targetID
-            try? store.insert(asset: catalog.assets[index])
+            persistAsset(catalog.assets[index])
             record(songID: targetID, target: target(forRole: asset.role), operation: .imported,
                    summary: "\(asset.originalFilename) regrouped into song (re-analysis).")
             movedCount += 1
@@ -590,8 +762,7 @@ final class AppState: ObservableObject {
                 // Pre-v3 asset: establish a baseline silently instead of
                 // spamming change events on first launch after upgrade.
                 catalog.assets[index].fileModifiedAt = diskModified
-                do { try store.insert(asset: catalog.assets[index]) }
-                catch { logger.error("Failed to baseline asset: \(error.localizedDescription)") }
+                persistAsset(catalog.assets[index])
             }
             return
         }
@@ -626,8 +797,7 @@ final class AppState: ObservableObject {
 
         asset.songID = songID
         catalog.assets.append(asset)
-        do { try store.insert(asset: asset) }
-        catch { logger.error("Failed to persist observed asset: \(error.localizedDescription)") }
+        persistAsset(asset)
         record(songID: songID, target: target(forRole: asset.role),
                operation: .imported, after: asset.id,
                summary: "\(asset.originalFilename) appeared in watched folder (observed).",
@@ -659,8 +829,7 @@ final class AppState: ObservableObject {
         fresh.createdAt = old.createdAt
         fresh.analyzedAt = nil
         catalog.assets[index] = fresh
-        do { try store.insert(asset: fresh) }
-        catch { logger.error("Failed to refresh asset: \(error.localizedDescription)") }
+        persistAsset(fresh)
     }
 
     private func hasArchivedEvent(for assetID: UUID) -> Bool {
@@ -679,8 +848,27 @@ final class AppState: ObservableObject {
     }
 
     private func persist(_ song: Song) {
-        do { try store.upsert(song: song) }
+        var toStore = song
+        toStore.updatedAt = Date()
+        if let idx = catalog.songs.firstIndex(where: { $0.id == song.id }) {
+            catalog.songs[idx] = toStore
+        }
+        do { try store.upsert(song: toStore) }
         catch { logger.error("Failed to persist song: \(error.localizedDescription)") }
+        markDirty(.song, toStore.id.uuidString)
+    }
+
+    /// Single choke point for asset writes (mirrors persistAsset in docs/app.js):
+    /// stamps updatedAt, keeps catalog.assets authoritative by id, persists.
+    private func persistAsset(_ asset: Asset) {
+        var toStore = asset
+        toStore.updatedAt = Date()
+        if let idx = catalog.assets.firstIndex(where: { $0.id == asset.id }) {
+            catalog.assets[idx] = toStore
+        }
+        do { try store.insert(asset: toStore) }
+        catch { logger.error("Failed to persist asset: \(error.localizedDescription)") }
+        markDirty(.asset, toStore.id.uuidString)
     }
 
     private func recomputeProgress(at index: Int) {

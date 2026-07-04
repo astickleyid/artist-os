@@ -13,6 +13,25 @@ const server = http.createServer((req, res) => {
   const browser = await chromium.launch();
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+
+  // Route sync calls to the REAL worker module (in-process SQLite/R2 fakes),
+  // so this e2e proves the client<->worker contract, not a guess at it.
+  const { makeD1, makeR2 } = require('/home/claude/artist-os/worker/test/adapters.js');
+  const workerMod = await import('/home/claude/artist-os/worker/src/index.js');
+  const workerEnv = { DB: makeD1('/home/claude/artist-os/worker/schema.sql'), AUDIO: makeR2(),
+    ALLOWED_ORIGINS: 'http://localhost:8931' };
+  const routeToWorker = async route => {
+    const req = route.request();
+    const workerReq = new Request(req.url(), {
+      method: req.method(),
+      headers: req.headers(),
+      body: ['GET', 'HEAD'].includes(req.method()) ? undefined : req.postDataBuffer()
+    });
+    const res = await workerMod.default.fetch(workerReq, workerEnv);
+    const buf = Buffer.from(await res.arrayBuffer());
+    await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers), body: buf });
+  };
+  await page.route('https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev/**', routeToWorker);
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
@@ -200,6 +219,63 @@ const server = http.createServer((req, res) => {
   }
   assert(analyzed, 'analysis completed');
   assert(analyzed.bpm && Math.abs(analyzed.bpm - 120) <= 3, 'BPM detected on real import: ' + (analyzed && analyzed.bpm));
+
+  // ---------- Cloudflare sync: real worker module, two simulated devices ----------
+  await page.evaluate(async () => { await window.__AOS.enableSync(); });
+  let s1 = await page.evaluate(() => window.__AOS.syncState);
+  assert(s1.status === 'on' && s1.accountId, 'device 1 sync enabled with an account');
+
+  // Everything already in the catalog got pushed on enable (pushAllToCloud)
+  const pulledDirectly = await workerMod.default.fetch(
+    new Request(`https://x/v1/sync/pull?since=0`, { headers: { authorization: 'Bearer ' + s1.token } }),
+    workerEnv
+  ).then(r => r.json());
+  assert(pulledDirectly.changes.some(c => c.kind === 'song'), 'initial catalog snapshot reached the worker on enable');
+  const songCountOnServer = pulledDirectly.changes.filter(c => c.kind === 'song').length;
+  const expectedSongCount = await page.evaluate(() => window.__AOS.state.songs.length);
+  assert(songCountOnServer === expectedSongCount,
+    `all ${expectedSongCount} existing songs pushed (got ${songCountOnServer})`);
+
+  // New mutation after enabling propagates via the debounced dirty-push
+  await page.evaluate(() => { window.__AOS.record(window.__AOS.state.songs[0].id, 'Song', 'Approved', 'e2e sync marker'); });
+  await page.waitForTimeout(1800); // debounce window
+  await page.evaluate(async () => { await window.__AOS.pushDirtyToCloud(); });
+  const afterEdit = await workerMod.default.fetch(
+    new Request(`https://x/v1/sync/pull?since=0`, { headers: { authorization: 'Bearer ' + s1.token } }),
+    workerEnv
+  ).then(r => r.json());
+  assert(afterEdit.changes.some(c => c.kind === 'event' && c.data && c.data.summary === 'e2e sync marker'),
+    'post-enable mutation reached the worker via debounced push');
+
+  // Second "device": fresh browser context (isolated storage), same worker backend
+  const context2 = await browser.newContext();
+  const page2 = await context2.newPage();
+  await page2.route('https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev/**', routeToWorker); // SAME workerEnv = same backend
+  await page2.goto('http://localhost:8931/');
+  await page2.evaluate(() => { window.__AOS.state.songs = []; }); // sanity: device 2 starts empty (fresh IndexedDB anyway)
+
+  const linkInfo = await page.evaluate(async () => window.__AOS.linkStart());
+  assert(/^[A-Z2-9]{6}$/.test(linkInfo.code), 'device 1 produced a real link code from the real worker: ' + linkInfo.code);
+
+  await page2.evaluate(async (code) => { await window.__AOS.linkClaim(code); }, linkInfo.code);
+  const s2 = await page2.evaluate(() => window.__AOS.syncState);
+  assert(s2.accountId === s1.accountId, 'device 2 joined the same account via the link code');
+
+  const device2Songs = await page2.evaluate(() => window.__AOS.state.songs.map(s => s.title.toLowerCase()));
+  assert(device2Songs.includes('night drive'), 'device 2 received device 1\'s catalog after linking: ' + JSON.stringify(device2Songs));
+  assert(device2Songs.includes('test song'), 'device 2 received the other song too');
+  const device2Events = await page2.evaluate(() => window.__AOS.state.events.some(e => e.summary === 'e2e sync marker'));
+  assert(device2Events, 'device 2 received event history, not just song shells');
+
+  // Mutation on device 2 flows back to device 1
+  await page2.evaluate(() => { window.__AOS.record(window.__AOS.state.songs.find(s => s.title.toLowerCase() === 'night drive').id, 'Song', 'Approved', 'from device 2'); });
+  await page2.waitForTimeout(1800);
+  await page2.evaluate(async () => { await window.__AOS.pushDirtyToCloud(); });
+  await page.evaluate(async () => { await window.__AOS.pullFromCloud(); });
+  const backOnDevice1 = await page.evaluate(() => window.__AOS.state.events.some(e => e.summary === 'from device 2'));
+  assert(backOnDevice1, 'bidirectional sync: device 2\'s change reached device 1');
+
+  await context2.close();
 
   const fatal = errors.filter(e => !e.includes('AudioContext') && !e.includes('play()'));
   assert(fatal.length === 0, 'no page errors (' + (fatal[0] || 'clean') + ')');

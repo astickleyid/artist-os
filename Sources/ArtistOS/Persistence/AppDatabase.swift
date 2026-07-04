@@ -126,6 +126,16 @@ final class AppDatabase {
             }
         }
 
+        migrator.registerMigration("v6") { db in
+            try db.alter(table: "song") { t in
+                t.add(column: "updatedAt", .datetime)
+            }
+            try db.alter(table: "asset") { t in
+                t.add(column: "updatedAt", .datetime)
+                t.add(column: "cloudKey", .text)
+            }
+        }
+
         return migrator
     }
 }

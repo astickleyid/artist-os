@@ -2,6 +2,7 @@
 (function () {
 "use strict";
 const C = window.AOSCore;
+const Sync = window.AOSSync;
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -72,12 +73,21 @@ const versionCount = id => masterStackFor(id).length;
 const allDecisions = () => state.songs.flatMap(s => C.decisionsFor(s, state.assets.filter(a => a.songId === s.id)));
 const existingHashes = () => new Set(state.assets.map(a => a.hash).filter(Boolean));
 
-async function persistSong(s) { await dbPut("songs", s); }
-async function persistAsset(a) { await dbPut("assets", a); }
+async function persistSong(s) {
+  s.updatedAt = now();
+  await dbPut("songs", s);
+  markDirty("song", s.id);
+}
+async function persistAsset(a) {
+  a.updatedAt = now();
+  await dbPut("assets", a);
+  markDirty("asset", a.id);
+}
 function record(songId, target, op, summary, observed = false) {
   const e = { id: uid(), songId, target, op, summary, t: now(), observed };
   state.events.unshift(e);
   dbPut("events", e);
+  markDirty("event", e.id);
   return e;
 }
 function toast(msg) {
@@ -568,6 +578,7 @@ function deleteSong(id) {
   state.songs = state.songs.filter(x => x.id !== id);
   dbDel("songs", id);
   if (state.songId === id) state.songId = state.songs[0] ? state.songs[0].id : null;
+  markDirty("song", id, true);
   toast(`Deleted ${s.title}`);
 }
 function deleteAsset(id) {
@@ -582,11 +593,143 @@ function deleteAsset(id) {
   dbDel("assets", id); dbDel("blobs", id); dbDel("kv", "peaks:" + id);
   const u = blobURLs.get(id); if (u) { URL.revokeObjectURL(u); blobURLs.delete(id); }
   record(a.songId, C.targetForRole(a.role), "Archived", `${a.file} removed from library.`);
+  markDirty("asset", id, true);
   toast(`Removed ${a.title}`);
 }
 function resolveDecision(slotId, winnerId) {
   assign(slotId, winnerId);
   setSlotState(slotId, "locked");
+}
+
+/* ---------- sync: Cloudflare push/pull + device linking + opt-in blobs ---------- */
+const SYNC_URL = window.AOS_SYNC_URL || "https://artist-os-sync.YOUR-SUBDOMAIN.workers.dev";
+const dirty = Sync.makeDirtyTracker();
+let syncState = { accountId: null, token: null, seq: 0, status: "off", lastError: null };
+let pushTimer = null;
+
+async function syncApi(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers);
+  if (syncState.token) headers.authorization = "Bearer " + syncState.token;
+  if (opts.body !== undefined && !(opts.body instanceof Blob) && !(opts.body instanceof ArrayBuffer)) {
+    headers["content-type"] = "application/json";
+    opts = { ...opts, body: JSON.stringify(opts.body) };
+  }
+  const res = await fetch(SYNC_URL + path, { ...opts, headers });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(msg.error || ("sync error " + res.status));
+  }
+  return res;
+}
+
+async function loadSyncState() {
+  const saved = await dbGet("kv", "sync-account").catch(() => null);
+  if (saved && saved.value) syncState = { ...syncState, ...saved.value, status: "on" };
+}
+async function saveSyncState() {
+  await dbPut("kv", { key: "sync-account", value: {
+    accountId: syncState.accountId, token: syncState.token, seq: syncState.seq
+  } });
+}
+
+async function enableSync() {
+  if (syncState.token) return syncState;
+  const res = await syncApi("/v1/account", { method: "POST" });
+  const body = await res.json();
+  syncState = { ...syncState, accountId: body.accountId, token: body.token, status: "on" };
+  await saveSyncState();
+  await pushAllToCloud();
+  return syncState;
+}
+
+async function linkStart() {
+  const res = await syncApi("/v1/link/start", { method: "POST" });
+  return res.json();
+}
+async function linkClaim(code) {
+  const res = await fetch(SYNC_URL + "/v1/link/claim", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code.toUpperCase().trim() })
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "link failed");
+  const body = await res.json();
+  syncState = { ...syncState, accountId: body.accountId, token: body.token, status: "on", seq: 0 };
+  await saveSyncState();
+  await pullFromCloud();
+  return syncState;
+}
+
+function markDirty(kind, id, deleted) {
+  dirty.mark(kind, id, deleted);
+  if (syncState.status !== "on") return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(pushDirtyToCloud, 1500);
+}
+
+function entityFor(kind, id) {
+  if (kind === "song") return state.songs.find(s => s.id === id);
+  if (kind === "asset") return state.assets.find(a => a.id === id);
+  return state.events.find(e => e.id === id);
+}
+
+async function pushDirtyToCloud() {
+  if (syncState.status !== "on" || !dirty.size) return;
+  const items = dirty.drain();
+  const changes = items.map(({ kind, id, deleted }) => {
+    if (deleted) return { kind, id, updatedAt: now(), deleted: true };
+    const entity = entityFor(kind, id);
+    return entity ? Sync.toChange(kind, entity) : null;
+  }).filter(Boolean);
+  if (!changes.length) return;
+  try {
+    await syncApi("/v1/sync/push", { method: "POST", body: { changes } });
+    syncState.lastError = null;
+  } catch (e) {
+    syncState.lastError = e.message;
+    items.forEach(i => dirty.mark(i.kind, i.id, i.deleted));
+  }
+}
+
+async function pushAllToCloud() {
+  const changes = [
+    ...state.songs.map(s => Sync.toChange("song", s)),
+    ...state.assets.filter(a => !a.demo).map(a => Sync.toChange("asset", a)),
+    ...state.events.map(e => Sync.toChange("event", e))
+  ];
+  for (let i = 0; i < changes.length; i += 200) {
+    await syncApi("/v1/sync/push", { method: "POST", body: { changes: changes.slice(i, i + 200) } });
+  }
+}
+
+async function pullFromCloud() {
+  let hasMore = true;
+  while (hasMore) {
+    const res = await syncApi(`/v1/sync/pull?since=${syncState.seq}`);
+    const body = await res.json();
+    for (const change of body.changes) {
+      const key = change.kind === "song" ? "songs" : change.kind === "asset" ? "assets" : "events";
+      state[key] = Sync.applyRemoteChange(state[key], change);
+    }
+    syncState.seq = body.seq;
+    hasMore = body.hasMore;
+  }
+  await saveSyncState();
+  renderAll(false);
+}
+
+async function uploadAssetToCloud(assetId) {
+  const a = byId(assetId);
+  const rec = await dbGet("blobs", assetId);
+  if (!a || !rec || !rec.blob) throw new Error("asset has no local audio to upload");
+  await enableSync();
+  await syncApi(`/v1/blob/${assetId}`, {
+    method: "PUT",
+    headers: { "content-type": rec.blob.type || "application/octet-stream" },
+    body: rec.blob
+  });
+  a.cloudKey = assetId;
+  await persistAsset(a); // persistAsset already marks it dirty for the next push
+  toast("Uploaded — available on every synced device");
 }
 
 /* ---------- audio intelligence: BPM + key (lazy, queued, persisted) ---------- */
@@ -627,6 +770,24 @@ async function drainAnalysis() {
     await new Promise(r => setTimeout(r, 60)); // keep the UI thread breathing
   }
   analyzeBusy = false;
+}
+
+function renderSyncCard() {
+  const s = syncState;
+  if (s.status !== "on") {
+    return `
+      <div class="panel" style="padding:14px;margin-bottom:14px">
+        <div class="sub">Sync your catalog across devices. Audio stays local unless you explicitly share an asset.</div>
+      </div>
+      <button class="btn gold" data-act="sync-enable" style="width:100%;margin-bottom:9px">Enable sync</button>
+      <button class="btn" data-act="sync-link" style="width:100%;margin-bottom:14px">I have a code from another device</button>`;
+  }
+  return `
+    <div class="panel" style="padding:14px;margin-bottom:14px">
+      <div class="row-title" style="font-size:14px">✓ Synced${s.lastError ? " · retrying…" : ""}</div>
+      <div class="sub mono" style="margin-top:4px">Account ${esc(s.accountId)}</div>
+    </div>
+    <button class="btn" data-act="sync-link" style="width:100%;margin-bottom:9px">Link another device</button>`;
 }
 
 /* ---------- decision engine ---------- */
@@ -924,6 +1085,8 @@ function renderSettings() {
     <div class="row-title">Library</div>
     <div class="sub" style="margin:6px 0 14px">${state.songs.length} songs · ${state.assets.length} assets · ${state.events.length} events · ~${mb} MB audio stored locally${memoryMode ? " · <b style='color:var(--gold)'>memory mode (nothing persists)</b>" : ""}</div>
     ${canConnect ? `<button class="btn" data-act="connect" style="width:100%;margin-bottom:9px">${state.watchStatus && state.watchStatus.live ? "Watching “" + esc(state.watchStatus.name) + "” — change folder" : "Connect a folder (auto-watch)"}</button>` : ""}
+    <div class="eyebrow" style="margin-top:18px">Sync</div>
+    ${renderSyncCard()}
     <button class="btn" data-act="reanalyze" style="width:100%;margin-bottom:9px">Re-analyze filenames & regroup</button>
     <button class="btn" data-act="export" style="width:100%;margin-bottom:9px">Export catalog backup (JSON)</button>
     <button class="btn danger" data-act="wipe" style="width:100%">Erase everything on this device…</button>
@@ -1135,6 +1298,7 @@ function assetMenuSheet(id) {
     <div class="hint mono">${esc(a.file)}${a.size ? " · " + (a.size / 1048576).toFixed(1) + " MB" : ""}${a.bpm ? " · " + Math.round(a.bpm) + " BPM" : ""}${a.keyName ? " · " + esc(a.keyName) : ""}${a.sourcePath ? " · " + esc(a.sourcePath) : ""}</div>
     <button class="opt" data-play="${id}"><span class="dot" style="--tint:var(--gold)"></span>Preview</button>
     ${((a.version || a.vOrder != null) && a.role === "fullMix") ? `<button class="opt" data-pinmaster="${id}"><span class="dot" style="--tint:var(--gold)"></span>Set as current master</button>` : ""}
+    ${(!a.demo && !a.cloudKey) ? `<button class="opt" data-act="cloud-upload" data-cloud-upload="${id}"><span class="dot" style="--tint:var(--blue)"></span>Make available everywhere</button>` : (a.cloudKey ? `<div class="hint" style="padding:8px 4px">☁️ Available on every synced device</div>` : "")}
     <button class="opt" data-act="confirm-del-asset" data-ref="${id}"><span class="dot" style="--tint:var(--red)"></span><span style="color:var(--red)">Remove from library…</span></button>`);
 }
 function confirmSheet(title, msg, act, ref) {
@@ -1195,6 +1359,44 @@ document.addEventListener("click", async e => {
   if (act === "files-new") {
     const name = $("#ft-new").value.trim() || "Imported " + new Date().toLocaleDateString();
     closeSheet(); importFiles(pendingFiles, { newSongName: name }); pendingFiles = null; return;
+  }
+  if (act === "sync-enable") {
+    try { await enableSync(); renderAll(false); toast("Sync enabled"); }
+    catch (e) { toast("Sync failed: " + e.message); }
+    return;
+  }
+  if (act === "sync-link") {
+    try {
+      if (syncState.status !== "on") await enableSync();
+      const { code, expiresInSeconds } = await linkStart();
+      openSheet(`
+        <h3>Link a device</h3>
+        <div class="hint">On your other device, open Settings → Sync → and enter this code within ${Math.round(expiresInSeconds / 60)} minutes.</div>
+        <div class="panel" style="padding:24px;text-align:center;margin-bottom:14px">
+          <div class="mono" style="font-size:32px;letter-spacing:6px;font-weight:800">${esc(code)}</div>
+        </div>
+        <div class="eyebrow">Or enter a code from another device</div>
+        <input class="field mono" id="link-code" placeholder="XXXXXX" maxlength="6" style="text-transform:uppercase">
+        <button class="btn gold" data-act="sync-claim" style="width:100%;margin-top:10px">Claim code</button>`);
+    } catch (e) { toast("Could not start linking: " + e.message); }
+    return;
+  }
+  if (act === "sync-claim") {
+    const code = $("#link-code").value;
+    if (!code) return;
+    try {
+      await linkClaim(code);
+      closeSheet(); renderAll(false);
+      toast("Device linked — catalog synced");
+    } catch (e) { toast("Link failed: " + e.message); }
+    return;
+  }
+  if (act === "cloud-upload") {
+    const id = t.dataset.cloudUpload;
+    toast("Uploading…");
+    try { await uploadAssetToCloud(id); closeSheet(); renderAll(false); }
+    catch (e) { toast("Upload failed: " + e.message); }
+    return;
   }
   if (act === "reanalyze") { reanalyzePreviewSheet(); return; }
   if (act === "do-reanalyze") { applyReanalyze(); return; }
@@ -1277,8 +1479,15 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
   runDecisionEngine();
   renderAll();
   queueAnalysis(state.assets.map(a => a.id));
+  await loadSyncState();
+  if (syncState.status === "on") pullFromCloud().catch(() => {});
+  renderAll(false);
 })();
 
 /* exposed for automated tests */
-window.__AOS = { state, importFiles, loadDemo, record, resolveDecision };
+window.__AOS = {
+  state, importFiles, loadDemo, record, resolveDecision,
+  enableSync, linkStart, linkClaim, pushDirtyToCloud, pullFromCloud, uploadAssetToCloud,
+  get syncState() { return syncState; }
+};
 })();

@@ -17,6 +17,7 @@ struct Song: Identifiable, Codable, Equatable {
     var risk: String
     var sections: [MasterSection]
     var masterAssetID: UUID? = nil
+    var updatedAt: Date = Date()
 }
 
 enum SongStatus: String, Codable, CaseIterable {
@@ -65,6 +66,8 @@ struct Asset: Identifiable, Codable, Equatable {
     var bpm: Double? = nil
     var musicalKey: String? = nil
     var analyzedAt: Date? = nil
+    var updatedAt: Date = Date()
+    var cloudKey: String? = nil
 }
 
 struct WatchedFolder: Identifiable, Codable, Equatable {

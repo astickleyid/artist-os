@@ -1,0 +1,15 @@
+name = "artist-os-sync"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "artist-os-sync"
+database_id = "eafb771e-7ff6-4f0f-ba94-883f8f0e19f5"
+
+[[r2_buckets]]
+binding = "AUDIO"
+bucket_name = "artist-os-audio"
+
+[vars]
+ALLOWED_ORIGINS = "https://astickleyid.github.io"

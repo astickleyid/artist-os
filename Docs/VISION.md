@@ -35,6 +35,25 @@ Asset (real file, optionally a version in a stack) · Creative Event
 - Dedup: content hash (size + head/tail SHA-256 on web; streaming SHA-256 native).
 - Auto events are attributed Observed and never downgrade artist decisions.
 
+## Sync (Cloudflare — live, metadata-first)
+Architecture per owner decision (Cloudflare over CloudKit — see README): one
+Worker (worker/src/index.js) in front of D1 (metadata) + R2 (opt-in audio).
+- **Metadata-first**: songs, sections, events, version stacks, and pins sync
+  automatically and cheaply (KBs). Audio stays local until a person explicitly
+  taps "Make available everywhere" on an asset — the Frame.io/Splice pattern.
+- **Auth**: no passwords. Creating an account issues a bearer token; a second
+  device joins the same account via a 6-character, single-use, 5-minute link
+  code (`/v1/link/start` + `/v1/link/claim`) — tokens are stored server-side
+  as SHA-256 hashes only.
+- **Conflict resolution**: last-write-wins by `updatedAt`, per-entity
+  (`kind:id`), with a monotonic per-account `seq` cursor for incremental
+  pulls. A tie favors the local write (it just happened in the same instant).
+- **Contract**: worker/schema.sql is the source of truth for the wire shape;
+  docs/sync.js (web) and SyncLogic.swift + SyncService.swift (macOS)
+  independently implement the same client contract against it — proven by
+  a real two-device e2e test that routes a live browser through the actual
+  worker module (tests/web/e2e.js) and by SyncServiceTests.swift on macOS.
+
 ## Platform roles
 - **macOS native**: the workstation. True FSEvents watching, deep catalog.
 - **Web (local-first)**: distribution + capture surface; blueprint for the
