@@ -29,7 +29,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ArtistOSTests",
-            dependencies: ["ArtistOS"],
+            dependencies: ["ArtistOS", "ArtistOSCore"],
             path: "Tests/ArtistOSTests"
         ),
         .testTarget(

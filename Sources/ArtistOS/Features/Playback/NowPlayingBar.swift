@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 
 /// Persistent playback strip pinned to the window bottom while any preview is
 /// active — the Splice/Apple Music convention, so playback control never

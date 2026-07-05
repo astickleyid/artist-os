@@ -1,4 +1,5 @@
 import XCTest
+import ArtistOSCore
 @testable import ArtistOS
 
 /// Records every request it receives and returns pre-scripted responses in

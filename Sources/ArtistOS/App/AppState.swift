@@ -1,4 +1,5 @@
 import Foundation
+import ArtistOSCore
 import os
 
 struct ImportProgress: Identifiable {

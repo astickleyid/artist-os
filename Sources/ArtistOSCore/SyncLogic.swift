@@ -6,17 +6,17 @@ import Foundation
 /// with an independently-evolving JS worker and web client: dictionary
 /// access degrades gracefully when either side adds/omits a field, where
 /// strict Decodable would fail the whole payload. Zero I/O — testable directly.
-enum SyncLogic {
+public enum SyncLogic {
 
-    typealias JSONDict = [String: Any]
+    public typealias JSONDict = [String: Any]
 
-    enum Kind: String { case song, asset, event }
+    public enum Kind: String { case song, asset, event }
 
     // MARK: - Encoding (entity -> wire dictionary)
 
     private static func msSince1970(_ date: Date) -> Double { date.timeIntervalSince1970 * 1000 }
 
-    static func dict(fromSection section: MasterSection) -> JSONDict {
+    public static func dict(fromSection section: MasterSection) -> JSONDict {
         [
             "id": section.id.uuidString, "name": section.name, "role": section.role,
             "assetID": section.assetID?.uuidString as Any, "state": section.state.rawValue,
@@ -24,7 +24,7 @@ enum SyncLogic {
         ]
     }
 
-    static func songPayload(_ song: Song) -> JSONDict {
+    public static func songPayload(_ song: Song) -> JSONDict {
         [
             "id": song.id.uuidString, "title": song.title, "era": song.era,
             "status": song.status.rawValue, "progress": song.progress,
@@ -34,7 +34,7 @@ enum SyncLogic {
         ]
     }
 
-    static func assetPayload(_ asset: Asset) -> JSONDict {
+    public static func assetPayload(_ asset: Asset) -> JSONDict {
         [
             "id": asset.id.uuidString, "songId": asset.songID?.uuidString as Any,
             "title": asset.title, "file": asset.originalFilename, "role": asset.role.rawValue,
@@ -47,7 +47,7 @@ enum SyncLogic {
     /// Note: unlike the web model, CreativeEvent has no boolean "observed"
     /// flag — observed-ness is conveyed in summary text by convention.
     /// This is a known, harmless platform divergence (tracked in VISION.md).
-    static func eventPayload(_ event: CreativeEvent) -> JSONDict {
+    public static func eventPayload(_ event: CreativeEvent) -> JSONDict {
         [
             "id": event.id.uuidString, "songId": event.songID.uuidString,
             "target": event.target.rawValue, "op": event.operation.rawValue,
@@ -55,21 +55,21 @@ enum SyncLogic {
         ]
     }
 
-    static func change(kind: Kind, id: String, updatedAt: Date, data: JSONDict) -> JSONDict {
+    public static func change(kind: Kind, id: String, updatedAt: Date, data: JSONDict) -> JSONDict {
         ["kind": kind.rawValue, "id": id, "updatedAt": msSince1970(updatedAt), "data": data]
     }
 
-    static func change(forSong song: Song) -> JSONDict {
+    public static func change(forSong song: Song) -> JSONDict {
         change(kind: .song, id: song.id.uuidString, updatedAt: song.updatedAt, data: songPayload(song))
     }
-    static func change(forAsset asset: Asset) -> JSONDict {
+    public static func change(forAsset asset: Asset) -> JSONDict {
         change(kind: .asset, id: asset.id.uuidString, updatedAt: asset.updatedAt, data: assetPayload(asset))
     }
-    static func change(forEvent event: CreativeEvent) -> JSONDict {
+    public static func change(forEvent event: CreativeEvent) -> JSONDict {
         change(kind: .event, id: event.id.uuidString, updatedAt: event.timestamp, data: eventPayload(event))
     }
 
-    static func tombstone(kind: Kind, id: String) -> JSONDict {
+    public static func tombstone(kind: Kind, id: String) -> JSONDict {
         ["kind": kind.rawValue, "id": id, "updatedAt": msSince1970(Date()), "deleted": true]
     }
 
@@ -86,7 +86,7 @@ enum SyncLogic {
         (dict[key] as? Int) ?? (dict[key] as? NSNumber)?.intValue
     }
 
-    static func section(from dict: JSONDict) -> MasterSection? {
+    public static func section(from dict: JSONDict) -> MasterSection? {
         guard let id = uuid(dict, "id"), let name = string(dict, "name"),
               let role = string(dict, "role"),
               let stateRaw = string(dict, "state"), let state = SectionState(rawValue: stateRaw)
@@ -102,7 +102,7 @@ enum SyncLogic {
     /// Merges a remote song payload into an existing local song (if any),
     /// preserving fields the wire contract doesn't carry (defensive against
     /// future divergence) while applying every field it does carry.
-    static func mergedSong(payload: JSONDict, updatedAt: Date, existing: Song?) -> Song? {
+    public static func mergedSong(payload: JSONDict, updatedAt: Date, existing: Song?) -> Song? {
         guard let idString = string(payload, "id"), let id = UUID(uuidString: idString) else { return nil }
         var song = existing ?? Song(
             id: id, title: "", era: "", status: .assembling, progress: 0,
@@ -122,7 +122,7 @@ enum SyncLogic {
         return song
     }
 
-    static func mergedAsset(payload: JSONDict, updatedAt: Date, existing: Asset?) -> Asset? {
+    public static func mergedAsset(payload: JSONDict, updatedAt: Date, existing: Asset?) -> Asset? {
         guard let idString = string(payload, "id"), let id = UUID(uuidString: idString) else { return nil }
         var asset = existing ?? Asset(
             id: id, title: "", originalFilename: "", role: .fullMix,
@@ -147,9 +147,9 @@ enum SyncLogic {
     // when it's strictly newer. A tie means "we just wrote this locally in
     // the same instant" and local wins.
 
-    static func shouldApplyRemote(updatedAt remoteMs: Double, overLocal localDate: Date) -> Bool {
+    public static func shouldApplyRemote(updatedAt remoteMs: Double, overLocal localDate: Date) -> Bool {
         remoteMs > msSince1970(localDate)
     }
 
-    static func date(fromMs ms: Double) -> Date { Date(timeIntervalSince1970: ms / 1000) }
+    public static func date(fromMs ms: Double) -> Date { Date(timeIntervalSince1970: ms / 1000) }
 }

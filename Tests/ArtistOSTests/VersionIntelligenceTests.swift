@@ -1,4 +1,5 @@
 import XCTest
+import ArtistOSCore
 @testable import ArtistOS
 
 final class VersionIntelligenceTests: XCTestCase {

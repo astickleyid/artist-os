@@ -1,4 +1,5 @@
 import Foundation
+import ArtistOSCore
 import GRDB
 
 // Flat record types keep the SQLite schema decoupled from the domain models.

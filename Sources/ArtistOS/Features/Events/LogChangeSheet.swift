@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 
 /// Manual creative-event entry using the structured target + operation language.
 struct LogChangeSheet: View {

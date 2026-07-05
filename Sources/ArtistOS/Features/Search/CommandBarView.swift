@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 
 struct CommandBarView: View {
     @EnvironmentObject private var state: AppState

@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 import UniformTypeIdentifiers
 
 struct ArtistOSShellView: View {

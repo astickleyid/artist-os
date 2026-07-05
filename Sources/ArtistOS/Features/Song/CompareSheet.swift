@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 
 /// Side-by-side candidate comparison for a master slot, following the
 /// reference-comparison pattern from mastering tools (Metric AB, Ozone):

@@ -1,4 +1,5 @@
 import SwiftUI
+import ArtistOSCore
 
 /// All creative events across the catalog, newest first (Timeline nav item).
 struct GlobalTimelineColumn: View {

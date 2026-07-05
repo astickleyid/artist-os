@@ -1,4 +1,5 @@
 import Foundation
+import ArtistOSCore
 
 enum MockCatalog {
     static func make() -> ArtistCatalog {

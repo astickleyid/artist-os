@@ -2,7 +2,7 @@ import Foundation
 
 /// Canonical filename + decision intelligence. MUST match docs/core.js
 /// (see Docs/VISION.md); shared test vectors live in both test suites.
-enum VersionIntelligence {
+public enum VersionIntelligence {
 
     static let versionWords: Set<String> = [
         "final", "master", "mix", "mixdown", "bounce", "bounced", "draft", "take",
@@ -10,10 +10,13 @@ enum VersionIntelligence {
         "alt", "revision", "rev", "new", "update", "updated", "latest", "old", "wip"
     ]
 
-    struct Parsed: Equatable {
-        var canonical: String
-        var label: String?
-        var order: Int?
+    public struct Parsed: Equatable {
+        public var canonical: String
+        public var label: String?
+        public var order: Int?
+        public init(canonical: String, label: String? = nil, order: Int? = nil) {
+            self.canonical = canonical; self.label = label; self.order = order
+        }
     }
 
     private static func stripParens(_ w: String) -> String {
@@ -39,7 +42,7 @@ enum VersionIntelligence {
         return (String(chars[0..<i]), Int(String(chars[i...]))!)
     }
 
-    static func isVersionToken(_ raw: String) -> Bool {
+    public static func isVersionToken(_ raw: String) -> Bool {
         let t = stripParens(raw.lowercased())
         if t.isEmpty { return false }
         if t.count <= 3, t.allSatisfy({ $0.isNumber }) { return true }
@@ -50,7 +53,7 @@ enum VersionIntelligence {
     }
 
     /// (number, strength): v# = 3, word# = 2, bare # = 1.
-    static func versionNumber(_ raw: String) -> (n: Int, strength: Int)? {
+    public static func versionNumber(_ raw: String) -> (n: Int, strength: Int)? {
         let t = stripParens(raw.lowercased())
         if let n = vNumber(t) { return (n, 3) }
         if let wd = wordDigits(t) {
@@ -60,7 +63,7 @@ enum VersionIntelligence {
         return nil
     }
 
-    static func parse(_ raw: String) -> Parsed {
+    public static func parse(_ raw: String) -> Parsed {
         var base = ImportService.titleize(raw)
         var labelParts: [String] = []
         var order: Int?
@@ -114,7 +117,7 @@ enum VersionIntelligence {
 
     // MARK: - Version stacks
 
-    static func sortVersions(_ assets: [Asset]) -> [Asset] {
+    public static func sortVersions(_ assets: [Asset]) -> [Asset] {
         assets.sorted { a, b in
             let av = a.vOrder ?? -1, bv = b.vOrder ?? -1
             if av != bv { return av > bv }
@@ -124,13 +127,13 @@ enum VersionIntelligence {
         }
     }
 
-    static func versionStack(_ assets: [Asset]) -> [Asset] {
+    public static func versionStack(_ assets: [Asset]) -> [Asset] {
         sortVersions(assets.filter { $0.version != nil || $0.vOrder != nil })
     }
 
     /// Master decisions consider only full-mix bounces: a hook take and a
     /// beat both labeled "v1" are not versions of each other.
-    static func masterStack(_ assets: [Asset]) -> [Asset] {
+    public static func masterStack(_ assets: [Asset]) -> [Asset] {
         versionStack(assets).filter { $0.role == .fullMix }
     }
 
@@ -140,7 +143,7 @@ enum VersionIntelligence {
         (.hook, .hook), (.bridge, .bridge), (.leadVocal, .verse)
     ]
 
-    static func slotTarget(forSectionName name: String) -> EventTarget {
+    public static func slotTarget(forSectionName name: String) -> EventTarget {
         let n = name.lowercased()
         if n.contains("intro") { return .intro }
         if n.contains("verse") { return .verse }
@@ -149,15 +152,18 @@ enum VersionIntelligence {
         return .song
     }
 
-    struct AutoFlag {
-        var sectionID: UUID
-        var sectionName: String
-        var role: AssetRole
-        var count: Int
+    public struct AutoFlag {
+        public var sectionID: UUID
+        public var sectionName: String
+        public var role: AssetRole
+        public var count: Int
+        public init(sectionID: UUID, sectionName: String, role: AssetRole, count: Int) {
+            self.sectionID = sectionID; self.sectionName = sectionName; self.role = role; self.count = count
+        }
     }
 
     /// D1: escalate-only, idempotent. Mutates the song's sections.
-    static func applyAutoDecisions(song: inout Song, assets: [Asset]) -> [AutoFlag] {
+    public static func applyAutoDecisions(song: inout Song, assets: [Asset]) -> [AutoFlag] {
         var fired: [AutoFlag] = []
         let escalatable: Set<SectionState> = [.open, .candidate, .experiment]
         for (role, target) in decisiveRoles {
@@ -180,18 +186,22 @@ enum VersionIntelligence {
         return fired
     }
 
-    enum DecisionKind { case slot, master }
+    public enum DecisionKind { case slot, master }
 
-    struct Decision: Identifiable {
-        let id: String
-        let kind: DecisionKind
-        let songID: UUID
-        let sectionID: UUID?
-        let title: String
-        let detail: String
+    public struct Decision: Identifiable {
+        public let id: String
+        public let kind: DecisionKind
+        public let songID: UUID
+        public let sectionID: UUID?
+        public let title: String
+        public let detail: String
+        public init(id: String, kind: DecisionKind, songID: UUID, sectionID: UUID?, title: String, detail: String) {
+            self.id = id; self.kind = kind; self.songID = songID
+            self.sectionID = sectionID; self.title = title; self.detail = detail
+        }
     }
 
-    static func decisions(for song: Song, assets: [Asset]) -> [Decision] {
+    public static func decisions(for song: Song, assets: [Asset]) -> [Decision] {
         var out: [Decision] = []
         for section in song.sections where section.state == .needsDecision {
             out.append(Decision(
