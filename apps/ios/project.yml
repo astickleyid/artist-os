@@ -1,0 +1,38 @@
+name: ArtistOS
+options:
+  bundleIdPrefix: com.stickley.artistos
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+packages:
+  ArtistOSCore:
+    path: ../..
+targets:
+  ArtistOSMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: ArtistOSCore
+        product: ArtistOSCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.stickley.artistos.mobile
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Artist OS
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.10"
+        ENABLE_PREVIEWS: YES
+schemes:
+  ArtistOSMobile:
+    build:
+      targets:
+        ArtistOSMobile: all
+    run:
+      config: Debug
