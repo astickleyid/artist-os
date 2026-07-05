@@ -16,7 +16,7 @@ jobs:
           node-version: '22'
       - name: Pure logic unit tests (core, audio, segment, assembly, home, sync)
         run: |
-          for f in core audio segment assembly home sync; do
+          for f in core audio segment assembly home sync comp; do
             if [ -f "tests/web/$f.test.js" ]; then
               echo "== $f =="
               node "tests/web/$f.test.js"

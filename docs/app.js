@@ -226,6 +226,112 @@ setInterval(() => { if (state.npAsset) renderNPTime(); }, 400);
 const PEAK_N = 72, PEAK_SIZE_CAP = 40 * 1024 * 1024;
 const peakMem = new Map();
 let decodeCtx = null;
+
+/* ---------------- Quick Swipe Comp: gapless synced multi-version player ----------------
+   The pro-tool approach (Metric AB / MCompare): every version plays at once,
+   perfectly synced from the same offset, and we switch WHICH is audible via
+   per-version gain nodes with equal-power crossfades. Flipping is instant and
+   gapless because nothing restarts — the playhead never moves. */
+const CompPlayer = {
+  ctx: null, sources: [], buffers: {}, gains: {}, rms: {}, master: null,
+  comp: null, startedAt: 0, offset: 0, playing: false, raf: null,
+  loudness: false, onTick: null, duration: 0, XF: 0.03,
+
+  async load(versions) {
+    this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    this.buffers = {}; this.rms = {}; this.duration = 0;
+    for (const v of versions) {
+      const rec = await dbGet("blobs", v.assetId);
+      if (!rec || !rec.blob) continue;
+      const buf = await this.ctx.decodeAudioData((await rec.blob.arrayBuffer()).slice(0));
+      this.buffers[v.id] = buf;
+      this.duration = Math.max(this.duration, buf.duration);
+      const ch = buf.getChannelData(0); let sum = 0, n = 0;
+      for (let i = 0; i < ch.length; i += 200) { sum += ch[i] * ch[i]; n++; }
+      this.rms[v.id] = Math.sqrt(sum / Math.max(1, n)) || 0.0001;
+    }
+    return this.duration;
+  },
+
+  _gainFor(id) {
+    if (!this.loudness) return 1;
+    const g = AOSComp.loudnessGains(this.rms);
+    return g[id] || 1;
+  },
+
+  _wire() {
+    this.master = this.ctx.createGain(); this.master.gain.value = 1;
+    this.master.connect(this.ctx.destination);
+    this.sources = []; this.gains = {};
+    for (const id in this.buffers) {
+      const src = this.ctx.createBufferSource(); src.buffer = this.buffers[id];
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      src.connect(g); g.connect(this.master);
+      this.gains[id] = g; this.sources.push(src);
+    }
+  },
+
+  _schedule(when, fromOffset) {
+    const segs = this.comp.segments;
+    const xf = this.XF;
+    for (const id in this.gains) {
+      const gp = this.gains[id].gain;
+      gp.cancelScheduledValues(when - 0.001);
+      const base = this._gainFor(id);
+      gp.setValueAtTime(AOSComp.sourceAt(this.comp, fromOffset) === id ? base : 0, when);
+      for (const s of segs) {
+        if (s.end <= fromOffset) continue;
+        const segStart = Math.max(s.start, fromOffset);
+        const tOn = when + (segStart - fromOffset);
+        const on = s.sourceId === id;
+        gp.setTargetAtTime(on ? base : 0, Math.max(when, tOn - xf), xf / 3);
+      }
+    }
+  },
+
+  play(comp, fromOffset) {
+    this.stop();
+    this.comp = comp;
+    this._wire();
+    const when = this.ctx.currentTime + 0.02;
+    this.offset = Math.max(0, Math.min(fromOffset || 0, this.duration - 0.05));
+    for (const src of this.sources) { try { src.start(when, this.offset); } catch (e) {} }
+    this._schedule(when, this.offset);
+    this.startedAt = when; this.playing = true;
+    this._loop();
+  },
+
+  reschedule(comp) {
+    this.comp = comp;
+    if (this.playing) this._schedule(this.ctx.currentTime + 0.01, this.pos());
+  },
+
+  setLoudness(on) { this.loudness = on; if (this.playing) this._schedule(this.ctx.currentTime + 0.01, this.pos()); },
+
+  pos() { return this.playing ? Math.min(this.duration, this.offset + (this.ctx.currentTime - this.startedAt)) : this.offset; },
+
+  seek(t) { if (this.comp) this.play(this.comp, t); },
+
+  _loop() {
+    const tick = () => {
+      if (!this.playing) return;
+      const p = this.pos();
+      if (this.onTick) this.onTick(p, AOSComp.sourceAt(this.comp, p));
+      if (p >= this.duration - 0.02) { this.stop(); if (this.onTick) this.onTick(this.duration, null); return; }
+      this.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  },
+
+  stop() {
+    this.playing = false;
+    if (this.raf) cancelAnimationFrame(this.raf);
+    for (const src of this.sources) { try { src.stop(); } catch (e) {} }
+    this.sources = [];
+  },
+
+  teardown() { this.stop(); this.buffers = {}; }
+};
 function seededPeaks(id, n = PEAK_N) {
   let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   const out = [];
@@ -920,6 +1026,50 @@ async function renderRecipe(recipe, opts) {
 }
 
 // 16-bit PCM stereo WAV encoder
+// Render a comp (swipe-comped segments) to a downloadable WAV. Decodes each
+// used version, copies each segment's samples, equal-power crossfade at every
+// boundary, optional loudness match. Browser-only.
+async function renderComp(comp, versions, opts) {
+  opts = opts || {};
+  if (!decodeCtx) decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const outSR = 44100, xf = opts.crossfade != null ? opts.crossfade : 0.03;
+  const vmap = {}; versions.forEach(v => { vmap[v.id] = v.assetId; });
+
+  const used = [...new Set(comp.segments.map(s => s.sourceId))];
+  const decoded = {}, rms = {};
+  for (const id of used) {
+    const rec = await dbGet("blobs", vmap[id]); if (!rec || !rec.blob) throw new Error("Missing audio for a version.");
+    const buf = await decodeCtx.decodeAudioData((await rec.blob.arrayBuffer()).slice(0));
+    decoded[id] = buf;
+    const ch = buf.getChannelData(0); let sum = 0, n = 0;
+    for (let i = 0; i < ch.length; i += 200) { sum += ch[i] * ch[i]; n++; }
+    rms[id] = Math.sqrt(sum / Math.max(1, n)) || 0.0001;
+  }
+  const gains = opts.loudness ? AOSComp.loudnessGains(rms) : {};
+  const gainOf = id => (opts.loudness ? (gains[id] || 1) : 1);
+
+  const totalSamples = Math.max(1, Math.ceil(comp.duration * outSR));
+  const outL = new Float32Array(totalSamples), outR = new Float32Array(totalSamples);
+  const xfS = Math.floor(xf * outSR);
+
+  comp.segments.forEach((seg, idx) => {
+    const buf = decoded[seg.sourceId]; if (!buf) return;
+    const inSR = buf.sampleRate, step = inSR / outSR, g = gainOf(seg.sourceId);
+    const chL = buf.getChannelData(0), chR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : chL;
+    const outStart = Math.floor(seg.start * outSR), outEnd = Math.floor(seg.end * outSR);
+    for (let o = outStart; o < outEnd && o < totalSamples; o++) {
+      const srcIdx = Math.floor(o * step); // shared timeline: sample at same time
+      let l = (chL[srcIdx] || 0) * g, r = (chR[srcIdx] || 0) * g;
+      // equal-power crossfade in from the previous segment at each interior boundary
+      if (idx > 0 && o - outStart < xfS) {
+        const t = (o - outStart) / xfS, gin = Math.sin(t * Math.PI / 2), gout = Math.cos(t * Math.PI / 2);
+        outL[o] = outL[o] * gout + l * gin; outR[o] = outR[o] * gout + r * gin;
+      } else { outL[o] = l; outR[o] = r; }
+    }
+  });
+  return encodeWAV([outL, outR], outSR);
+}
+
 function encodeWAV(channels, sampleRate) {
   const len = channels[0].length;
   const numCh = channels.length;
@@ -1388,6 +1538,7 @@ function renderSongView() {
   let body = "";
   if (state.songTab === "master") body = renderMaster(s);
   if (state.songTab === "structure") body = renderStructure(s);
+  if (state.songTab === "comp") body = renderComp_View(s);
   if (state.songTab === "changes") body = renderEvents(state.events.filter(e => e.songId === s.id), false);
   if (state.songTab === "assets") body = renderAssetCards(assetsFor(s.id), false);
   return `
@@ -1401,7 +1552,7 @@ function renderSongView() {
     <div class="bar" style="margin-top:14px"><i style="width:${p * 100}%"></i></div>
   </div>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <div class="segs">${[["master","Master"],["structure","Structure"],["changes","Changes"],["assets","Assets"]].map(([k, l]) =>
+    <div class="segs">${[["master","Master"],["comp","Comp"],["structure","Structure"],["changes","Changes"],["assets","Assets"]].map(([k, l]) =>
       `<button data-songtab="${k}" class="${state.songTab === k ? "on" : ""}">${l}</button>`).join("")}</div>
     ${versionCount(s.id) >= 2 ? `<button class="btn ghost" data-versioncompare="${s.id}" style="min-height:40px;color:var(--blue)">⚖ Compare versions</button>` : ""}
     <button class="btn ghost" data-act="log-change" style="min-height:40px;color:var(--gold)">＋ Log change</button>
@@ -1551,6 +1702,227 @@ function renderStructure(s) {
   return html;
 }
 
+/* ---------------- QUICK SWIPE COMP view (Logic-style comping across versions) ---------------- */
+const COMP_COLORS = ["#D6AE5C", "#80A6FF", "#7AD685", "#E8788A", "#B48CFF", "#5CD6C4"];
+let compState = null; // { songId, versions:[{id,assetId,label,color}], comp, duration, ready }
+
+function compVersionsFor(songId, sectionWindow) {
+  // versions = the master stack (full-mix versions) with real audio, newest-first
+  return masterStackFor(songId)
+    .filter(a => !a.demo)
+    .map((a, i) => ({ id: "cv" + i, assetId: a.id, label: a.version || a.title, color: COMP_COLORS[i % COMP_COLORS.length], asset: a }));
+}
+
+function renderComp_View(s) {
+  const versions = compVersionsFor(s.id);
+  if (versions.length < 2) {
+    return `<div class="comp-wrap"><div class="empty"><div class="big">⚡</div><b>Need at least two versions</b>Import another mix or bounce of “${esc(s.title)}” and you can swipe-comp between them here — take the verse from one, the hook from another, into one master.</div></div>`;
+  }
+  // (re)init comp state for this song if needed
+  if (!compState || compState.songId !== s.id) {
+    compState = { songId: s.id, versions, comp: null, duration: 0, ready: false, loudness: false, playing: false, pos: 0 };
+    // kick off async load
+    loadCompAudio(s.id);
+  }
+  const cs = compState;
+  const strip = cs.comp ? cs.comp.segments.map(seg => {
+    const v = cs.versions.find(x => x.id === seg.sourceId) || cs.versions[0];
+    const w = cs.duration ? ((seg.end - seg.start) / cs.duration * 100) : 0;
+    return `<div class="seg" style="width:${w}%;background:${v.color}">${w > 10 ? esc(v.label) : ""}</div>`;
+  }).join("") : "";
+
+  const lanes = cs.versions.map(v => `
+    <div class="comp-lane" data-complane="${v.id}">
+      <div class="lane-head"><span class="vdot" style="background:${v.color}"></span>${esc(v.label)}
+        <span class="meta">${v.asset.bpm ? Math.round(v.asset.bpm) + " BPM" : ""}${v.asset.musicalKey ? " · " + esc(v.asset.musicalKey) : ""}</span></div>
+      <canvas class="lane-wave" data-lanewave="${v.assetId}" data-tint="${v.color}"></canvas>
+    </div>`).join("");
+
+  return `<div class="comp-wrap">
+    <div class="comp-intro"><b>Swipe across a version</b> to make it the source for that stretch of the song — verse from one take, hook from another, like comping vocal takes in Logic. Playback flips instantly at the same spot, no gap.</div>
+
+    <div class="comp-strip-label">Your comp</div>
+    <div class="comp-strip" id="comp-strip">${strip || `<div class="seg" style="width:100%;background:var(--raised);color:var(--muted)">loading versions…</div>`}</div>
+
+    <div class="comp-lanes" id="comp-lanes">
+      ${lanes}
+      <div class="comp-playhead" id="comp-playhead" style="left:0;display:none"></div>
+    </div>
+
+    <div class="comp-transport">
+      <button class="cp-play" data-act="comp-play">▶</button>
+      <div class="cp-time" id="comp-time">0:00 / ${C.mmss(cs.duration || 0)}</div>
+      <div class="cp-spacer"></div>
+      <button class="comp-toggle ${cs.loudness ? "on" : ""}" data-act="comp-loudness">${cs.loudness ? "✓ " : ""}Match loudness</button>
+    </div>
+
+    <div class="comp-actions">
+      <button class="btn ghost" data-act="comp-reset" style="flex:0 0 auto">Reset</button>
+      <button class="btn gold" data-act="comp-render">⬇ Render comp</button>
+    </div>
+    <div class="comp-hint-sm" id="comp-hint">${compSeamHint(cs)}</div>
+  </div>`;
+}
+
+function compSeamHint(cs) {
+  if (!cs.versions || cs.versions.length < 2) return "";
+  const bpms = cs.versions.map(v => v.asset.bpm).filter(Boolean);
+  const lens = cs.versions.map(v => v.asset.duration).filter(Boolean);
+  const bpmSpread = bpms.length >= 2 && (Math.max(...bpms) - Math.min(...bpms) > 2);
+  const lenSpread = lens.length >= 2 && (Math.max(...lens) - Math.min(...lens) > 1.5);
+  if (bpmSpread || lenSpread)
+    return `<span class="seam-warn">⚠ These versions differ in ${bpmSpread ? "tempo" : "length"} — swipe boundaries may not line up perfectly. Best with mixes of the same take.</span>`;
+  return "Tip: swipe right across a lane to claim that stretch. Toggle loudness match to compare the take, not the volume.";
+}
+
+async function loadCompAudio(songId) {
+  const cs = compState; if (!cs || cs.songId !== songId) return;
+  try {
+    const dur = await CompPlayer.load(cs.versions.map(v => ({ id: v.id, assetId: v.assetId })));
+    if (!compState || compState.songId !== songId) return;
+    cs.duration = dur;
+    cs.comp = AOSComp.makeComp(dur, cs.versions[0].id);
+    cs.ready = true;
+    if (state.songId === songId && state.songTab === "comp") { renderAll(false); drawCompLanes(); }
+  } catch (e) { /* leave the loading state; lanes still show */ }
+}
+
+function drawCompLanes() {
+  const cs = compState; if (!cs) return;
+  // waveforms
+  $$("canvas[data-lanewave]").forEach(cv => {
+    const assetId = cv.dataset.lanewave;
+    const buf = CompPlayer.buffers[cs.versions.find(v => v.assetId === assetId)?.id];
+    drawBufferWave(cv, buf, cv.dataset.tint);
+  });
+  paintCompActive();
+}
+
+function drawBufferWave(cv, buf, tint) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 320, h = cv.clientHeight || 76;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const ctx = cv.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  if (!buf) return;
+  const data = buf.getChannelData(0), step = Math.floor(data.length / w) || 1, mid = h / 2;
+  ctx.strokeStyle = tint || "#D6AE5C"; ctx.globalAlpha = .8; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = 0; x < w; x++) {
+    let min = 1, max = -1;
+    for (let i = 0; i < step; i++) { const v = data[x * step + i] || 0; if (v < min) min = v; if (v > max) max = v; }
+    ctx.moveTo(x + .5, mid + min * mid * .9); ctx.lineTo(x + .5, mid + max * mid * .9);
+  }
+  ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+function paintCompActive() {
+  const cs = compState; if (!cs || !cs.comp || !cs.duration) return;
+  // dim lanes; overlay active regions per lane from the comp
+  $$(".comp-lane").forEach(laneEl => {
+    laneEl.querySelectorAll(".active-mask,.active-line").forEach(n => n.remove());
+    const vid = laneEl.dataset.complane;
+    laneEl.classList.add("dimmed");
+    for (const seg of cs.comp.segments) {
+      if (seg.sourceId !== vid) continue;
+      laneEl.classList.remove("dimmed");
+      const v = cs.versions.find(x => x.id === vid);
+      const left = seg.start / cs.duration * 100, width = (seg.end - seg.start) / cs.duration * 100;
+      const mask = document.createElement("div");
+      mask.className = "active-mask"; mask.style.left = left + "%"; mask.style.width = width + "%"; mask.style.background = v.color;
+      const line = document.createElement("div");
+      line.className = "active-line"; line.style.left = left + "%"; line.style.width = width + "%"; line.style.borderColor = v.color;
+      laneEl.appendChild(mask); laneEl.appendChild(line);
+    }
+  });
+  // strip
+  const stripEl = $("#comp-strip");
+  if (stripEl) stripEl.innerHTML = cs.comp.segments.map(seg => {
+    const v = cs.versions.find(x => x.id === seg.sourceId) || cs.versions[0];
+    const w = (seg.end - seg.start) / cs.duration * 100;
+    return `<div class="seg" style="width:${w}%;background:${v.color}">${w > 10 ? esc(v.label) : ""}</div>`;
+  }).join("");
+}
+
+// swipe handling on the lanes container
+function initCompSwipe() {
+  const lanes = $("#comp-lanes"); if (!lanes || lanes._wired) return; lanes._wired = true;
+  let active = null; // {laneEl, vid, startX, rect}
+  const xToTime = (clientX, rect) => Math.max(0, Math.min(compState.duration, (clientX - rect.left) / rect.width * compState.duration));
+
+  const down = e => {
+    const laneEl = e.target.closest(".comp-lane"); if (!laneEl || !compState || !compState.ready) return;
+    const rect = lanes.getBoundingClientRect();
+    active = { laneEl, vid: laneEl.dataset.complane, startT: xToTime(e.clientX ?? e.touches[0].clientX, rect), rect, lastT: null };
+    laneEl.setPointerCapture && e.pointerId != null && laneEl.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const move = e => {
+    if (!active) return;
+    const x = e.clientX ?? (e.touches && e.touches[0].clientX); if (x == null) return;
+    active.lastT = xToTime(x, active.rect);
+    // live preview: apply provisional swipe from startT..lastT
+    const a = Math.min(active.startT, active.lastT), b = Math.max(active.startT, active.lastT);
+    compState._preview = AOSComp.applySwipe(compState.comp, active.vid, a, b);
+    paintCompActivePreview();
+    e.preventDefault();
+  };
+  const up = e => {
+    if (!active) return;
+    if (active.lastT != null) {
+      const a = Math.min(active.startT, active.lastT), b = Math.max(active.startT, active.lastT);
+      if (b - a > 0.05) {
+        compState.comp = AOSComp.applySwipe(compState.comp, active.vid, a, b);
+        compState._preview = null;
+        paintCompActive();
+        if (CompPlayer.playing) CompPlayer.reschedule(compState.comp);
+      }
+    }
+    active = null;
+  };
+  lanes.addEventListener("pointerdown", down);
+  lanes.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+function paintCompActivePreview() {
+  const cs = compState; const comp = cs._preview || cs.comp; if (!comp) return;
+  const saved = cs.comp; cs.comp = comp; paintCompActive(); cs.comp = saved;
+}
+
+function compPlayToggle() {
+  const cs = compState; if (!cs || !cs.ready) return;
+  const ph = $("#comp-playhead");
+  if (CompPlayer.playing) {
+    CompPlayer.stop(); cs.playing = false;
+    const btn = $("[data-act='comp-play']"); if (btn) btn.textContent = "▶";
+    return;
+  }
+  CompPlayer.loudness = cs.loudness;
+  CompPlayer.onTick = (p, srcId) => {
+    const el = $("#comp-time"); if (el) el.textContent = `${C.mmss(p)} / ${C.mmss(cs.duration)}`;
+    if (ph && cs.duration) { ph.style.display = "block"; ph.style.left = (p / cs.duration * 100) + "%"; }
+    if (p >= cs.duration - 0.03) { const b = $("[data-act='comp-play']"); if (b) b.textContent = "▶"; cs.playing = false; }
+  };
+  CompPlayer.play(cs.comp, cs.pos || 0);
+  cs.playing = true;
+  const btn = $("[data-act='comp-play']"); if (btn) btn.textContent = "❚❚";
+}
+
+async function compRender() {
+  const cs = compState; if (!cs || !cs.ready) { toast("Still loading versions…"); return; }
+  toast("Rendering your comp — on-device");
+  try {
+    const blob = await renderComp(cs.comp, cs.versions.map(v => ({ id: v.id, assetId: v.assetId })), { loudness: cs.loudness, crossfade: 0.03 });
+    const s = song();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = (s ? s.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() : "comp") + "-comp.wav";
+    a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+    const used = AOSComp.sourcesUsed(cs.comp);
+    record(s.id, "Master", "Structure Updated", `Comped a new master from ${used} version${used > 1 ? "s" : ""} (${cs.comp.segments.length} swipe segments).`);
+    toast("Comp rendered — check your files");
+  } catch (e) { toast("Render failed: " + (e.message || "unknown")); }
+}
+
 function renderEvents(list, withSong) {
   if (!list.length) return `<div class="empty"><div class="big">⏱</div><b>No creative events yet</b>Import audio or make a change — the record writes itself.</div>`;
   return `<div class="eyebrow">Creative Change Log</div>` + list.map(e => {
@@ -1619,6 +1991,7 @@ function renderAll(scroll = true) {
   $("#back").classList.toggle("show", (state.tab === "home" || state.tab === "songs") && !!state.songId);
   $$("nav#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === state.tab));
   drawWaves($("#view"));
+  if (state.songId && state.songTab === "comp") { drawCompLanes(); initCompSwipe(); }
   renderNP();
   if (scroll) $("#main").scrollTo({ top: 0 });
 }
@@ -1869,6 +2242,10 @@ document.addEventListener("click", async e => {
   if (act === "asm-start") { startAssembly(); return; }
   if (act === "asm-reset") { state.asmRecipe = null; renderAll(false); return; }
   if (act === "asm-render") { renderAndDownload(); return; }
+  if (act === "comp-play") { compPlayToggle(); return; }
+  if (act === "comp-loudness") { if (compState) { compState.loudness = !compState.loudness; CompPlayer.setLoudness(compState.loudness); renderAll(false); drawCompLanes(); initCompSwipe(); } return; }
+  if (act === "comp-reset") { if (compState && compState.duration) { compState.comp = AOSComp.makeComp(compState.duration, compState.versions[0].id); if (CompPlayer.playing) CompPlayer.reschedule(compState.comp); paintCompActive(); } return; }
+  if (act === "comp-render") { compRender(); return; }
   if (act === "lc-save") {
     record(song().id, $("#lc-target").value, $("#lc-op").value, $("#lc-sum").value.trim() || "Manual entry.");
     closeSheet(); state.songTab = "changes"; renderAll(false); toast("Change logged"); return;
@@ -2020,7 +2397,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && di
 window.__AOS = {
   state, importFiles, loadDemo, record, resolveDecision,
   enableSync, linkStart, linkClaim, pushDirtyToCloud, pullFromCloud, uploadAssetToCloud,
-  renderAll, segmentAsset, renderRecipe, startAssembly, renderAndDownload,
+  renderAll, segmentAsset, renderRecipe, startAssembly, renderAndDownload, renderComp, CompPlayer,
   get syncState() { return syncState; }
 };
 })();
