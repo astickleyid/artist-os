@@ -60,18 +60,7 @@ enum ImportService {
     }
 
     static func titleize(_ raw: String, stripExtension: Bool = true) -> String {
-        var base = raw
-        if stripExtension {
-            base = (raw as NSString).deletingPathExtension
-        }
-        let cleaned = base
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-        let collapsed = cleaned
-            .components(separatedBy: .whitespaces)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        return collapsed.isEmpty ? raw : collapsed
+        VersionIntelligence.titleize(raw, stripExtension: stripExtension)
     }
 
     static func defaultSections() -> [MasterSection] {

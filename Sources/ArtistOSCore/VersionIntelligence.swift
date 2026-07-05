@@ -42,6 +42,22 @@ public enum VersionIntelligence {
         return (String(chars[0..<i]), Int(String(chars[i...]))!)
     }
 
+    /// Filename -> human title (pure; shared with web core.js titleize).
+    public static func titleize(_ raw: String, stripExtension: Bool = true) -> String {
+        var base = raw
+        if stripExtension {
+            base = (raw as NSString).deletingPathExtension
+        }
+        let cleaned = base
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+        let collapsed = cleaned
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return collapsed.isEmpty ? raw : collapsed
+    }
+
     public static func isVersionToken(_ raw: String) -> Bool {
         let t = stripParens(raw.lowercased())
         if t.isEmpty { return false }
@@ -64,7 +80,7 @@ public enum VersionIntelligence {
     }
 
     public static func parse(_ raw: String) -> Parsed {
-        var base = ImportService.titleize(raw)
+        var base = titleize(raw)
         var labelParts: [String] = []
         var order: Int?
         var strength = 0
@@ -106,7 +122,7 @@ public enum VersionIntelligence {
 
         let canonical = base.trimmingCharacters(in: CharacterSet(charactersIn: " -_."))
         if canonical.count < 2 || canonical.allSatisfy({ $0.isNumber }) {
-            return Parsed(canonical: ImportService.titleize(raw), label: nil, order: nil)
+            return Parsed(canonical: titleize(raw), label: nil, order: nil)
         }
         return Parsed(
             canonical: canonical,

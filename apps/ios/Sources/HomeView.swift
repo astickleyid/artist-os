@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject var store: MobileStore
+    @EnvironmentObject var store: CompanionStore
     @State private var showCapture = false
 
     private var greeting: String {
@@ -15,6 +15,15 @@ struct HomeView: View {
     }
 
     var body: some View {
+        if store.linkState != .linked {
+            LinkView()
+                .task { await store.bootstrap() }
+        } else {
+            feed
+        }
+    }
+
+    private var feed: some View {
         ZStack(alignment: .bottom) {
             AOS.ink.ignoresSafeArea()
 
@@ -56,6 +65,16 @@ struct HomeView: View {
                         ForEach(store.songs) { MotionRow(song: $0) }
                     }
 
+                    if store.songs.isEmpty {
+                        Panel {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Linked — nothing here yet").font(.system(size: 15, weight: .bold)).foregroundStyle(AOS.text)
+                                Text("Import audio on your Mac or in the web app and it appears here automatically.")
+                                    .font(.system(size: 12.5)).foregroundStyle(AOS.muted)
+                            }
+                        }
+                    }
+
                     Color.clear.frame(height: 96) // room above the capture bar
                 }
                 .padding(.horizontal, AOS.Space.lg)
@@ -63,6 +82,7 @@ struct HomeView: View {
 
             CaptureBar { showCapture = true }
         }
+        .refreshable { await store.refresh() }
         .sheet(isPresented: $showCapture) {
             CaptureSheet().presentationDetents([.medium])
         }
