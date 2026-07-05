@@ -603,9 +603,16 @@ function deleteAsset(id) {
   markDirty("asset", id, true);
   toast(`Removed ${a.title}`);
 }
-function resolveDecision(slotId, winnerId) {
+function resolveDecision(slotId, winnerId, reason) {
   assign(slotId, winnerId);
   setSlotState(slotId, "locked");
+  // Source of Truth: events say WHAT, decisions say WHY. Reason is optional —
+  // never force bookkeeping — but when given, it's preserved as a fact.
+  if (reason && reason.trim()) {
+    const s = song(), x = s.sections.find(z => z.id === slotId);
+    record(s.id, C.targetForName(x.name), "Decision Made",
+      `${byId(winnerId).title} approved for ${x.name} — reason: ${reason.trim()}`);
+  }
 }
 
 /* ---------- sync: Cloudflare push/pull + device linking + opt-in blobs ---------- */
@@ -1104,11 +1111,12 @@ function runDecisionEngine(songIds) {
     }
   }
 }
-function pinMaster(songId, assetId) {
+function pinMaster(songId, assetId, reason) {
   const s = state.songs.find(x => x.id === songId); if (!s) return;
   const a = byId(assetId); if (!a || s.masterAssetId === assetId) return;
   s.masterAssetId = assetId; persistSong(s);
-  record(songId, "Master", "Approved", `${a.title}${a.version ? " (" + a.version + ")" : ""} pinned as current master.`);
+  const why = reason && reason.trim() ? ` Reason: ${reason.trim()}` : "";
+  record(songId, "Master", "Approved", `${a.title}${a.version ? " (" + a.version + ")" : ""} pinned as current master.${why}`);
   toast(`★ ${a.title} is the master`);
 }
 
@@ -1738,6 +1746,7 @@ function compareSheet(slotId) {
     <h3>Compare — ${esc(x.name)}</h3>
     <div class="hint">Switch sides without losing the playhead. Choosing locks the slot.</div>
     <div class="ab-grid">${side("A", byId(ab.a), "a", "var(--gold)", "#D6AE5C")}${side("B", byId(ab.b), "b", "var(--blue)", "#80A6FF")}</div>
+    <input class="field" id="ab-why" placeholder="Why? (optional — saved with the decision)" style="margin-bottom:10px">
     <button class="btn ghost" style="width:100%" data-act="close">Keep undecided</button>`);
   drawWaves($("#sheet"));
 }
@@ -1766,6 +1775,7 @@ function versionCompareSheet(songId) {
     <h3>Current master — ${esc(s.title)}</h3>
     <div class="hint">Compare any two versions at the same playhead. Pinning marks the song's source of truth.</div>
     <div class="ab-grid">${side("A", byId(ab.a), "a", "var(--gold)", "#D6AE5C")}${side("B", byId(ab.b), "b", "var(--blue)", "#80A6FF")}</div>
+    <input class="field" id="ab-why" placeholder="Why? (optional — saved with the decision)" style="margin-bottom:10px">
     <button class="btn ghost" style="width:100%" data-act="close">Keep undecided</button>`);
   drawWaves($("#sheet"));
 }
@@ -1943,8 +1953,9 @@ document.addEventListener("click", async e => {
   }
   if (t.dataset.abchoose) {
     const winner = byId(ab[t.dataset.abchoose]);
-    if (ab.kind === "master") { pinMaster(ab.songId, winner.id); }
-    else { resolveDecision(ab.slot, winner.id); toast(winner.title + " locked ✓"); }
+    const why = ($("#ab-why") && $("#ab-why").value) || "";
+    if (ab.kind === "master") { pinMaster(ab.songId, winner.id, why); }
+    else { resolveDecision(ab.slot, winner.id, why); toast(winner.title + " locked ✓"); }
     Player.stop(); ab = null; closeSheet(); renderAll(false);
     return;
   }
