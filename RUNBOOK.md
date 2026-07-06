@@ -1,41 +1,51 @@
 # Running Artist OS on your machines
 
-Everything here is one command. You never touch Xcode's UI unless you want to.
+Everything here is one command. You never touch Xcode's UI unless you're
+running on your physical iPhone (which needs your Apple ID once).
 
 ## Prereqs (one time)
-- **Xcode** installed from the App Store (gives you the Swift toolchain + iOS Simulator).
-- **Homebrew** (https://brew.sh) — the iOS script uses it to install `xcodegen` automatically.
+- **Xcode** from the App Store (Swift toolchain + iOS Simulator).
+- **Homebrew** (https://brew.sh) — scripts auto-install `xcodegen`.
 
-Open Terminal, `cd` into the project folder once, then:
+Open Terminal, `cd` into the project folder, then run `./scripts/preflight.sh`
+once — it checks everything and tells you in plain English how to fix anything
+missing.
 
-## macOS app
+## Demo on your iPhone (physical device)
+```
+make device
+```
+Generates the project and opens it in Xcode. Then, one time only:
+1. Select the **ArtistOSMobile** target → **Signing & Capabilities**.
+2. Check **Automatically manage signing** → pick your **Team** (your Apple ID).
+3. Plug in your iPhone, choose it as the destination (top bar), press **▶**.
+
+That Apple-ID step is the one thing only you can do — it's your developer
+identity signing the app onto your own phone. You're already enrolled, so it's
+about 30 seconds the first time, then never again.
+
+## macOS app (runs locally, no signing)
 ```
 make mac
 ```
-Builds `build/ArtistOS.app` and opens it. Because it isn't code-signed yet, macOS
-may say "unidentified developer" the first time — right-click the app → **Open**,
-or run `xattr -dr com.apple.quarantine build/ArtistOS.app` once.
+Builds `build/ArtistOS.app` and opens it. First launch, macOS may say
+"unidentified developer" → right-click → **Open** (or once:
+`xattr -dr com.apple.quarantine build/ArtistOS.app`).
 
-## iOS app (Simulator)
+## iOS in the Simulator (no device, no signing)
 ```
 make ios
 ```
-Generates the Xcode project, boots the iPhone Simulator, builds, installs, and
-launches the companion. To target a different simulator: `SIM_DEVICE="iPhone 15" make ios`.
+Auto-picks an installed simulator, builds, installs, launches. Override with
+`SIM_DEVICE="iPhone 15" make ios`.
 
-## Run the tests
+## Tests
 ```
 make test
 ```
 
-## Don't want to build locally? Grab the CI artifacts
-Every push builds both apps on GitHub's Mac runners and attaches them:
-1. Go to the repo → **Actions** → the latest green run.
-2. Download **ArtistOS-macOS-app** (unzip → double-click) or
-   **ArtistOS-iOS-simulator-app** (unzip → drag onto a booted Simulator, or
-   `xcrun simctl install booted ArtistOSMobile.app`).
-
-## Onto your real iPhone / TestFlight (later, needs your Apple ID)
-The Simulator build is unsigned. For your physical phone or TestFlight we sign
-with your Developer account — that's the one step that needs you, and I'll hand
-you the exact flow when we get there. You're already enrolled, so it's short.
+## Prefer not to build locally? Grab CI artifacts
+Repo → **Actions** → latest green run → download **ArtistOS-macOS-app** (unzip,
+double-click) or **ArtistOS-iOS-simulator-app** (unzip, drag onto a booted
+Simulator). Note: the iOS artifact is a *Simulator* build — for your physical
+phone use `make device` above.

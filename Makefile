@@ -18,3 +18,7 @@ app-mac:
 
 clean:
 	rm -rf build apps/ios/build apps/ios/ArtistOS.xcodeproj .build
+
+## Open the iOS project in Xcode to run on your physical iPhone
+device:
+	./scripts/open-in-xcode.sh
