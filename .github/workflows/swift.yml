@@ -15,3 +15,15 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
+      - name: Package macOS .app
+        run: ./scripts/package-macos-app.sh release
+      - name: Zip .app
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent ArtistOS.app ArtistOS-mac.zip
+      - name: Upload macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtistOS-macOS-app
+          path: build/ArtistOS-mac.zip
+          if-no-files-found: error

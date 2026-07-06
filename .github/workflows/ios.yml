@@ -27,6 +27,20 @@ jobs:
             -scheme ArtistOSMobile \
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO \
-            build | tail -60
+            build | tail -40
+      - name: Locate + zip simulator .app
+        working-directory: apps/ios
+        run: |
+          APP="$(find build -name 'ArtistOSMobile.app' -path '*iphonesimulator*' | head -1)"
+          echo "app: $APP"
+          [ -n "$APP" ] || { echo 'app not found'; exit 1; }
+          ditto -c -k --sequesterRsrc --keepParent "$APP" ArtistOSMobile-sim.zip
+      - name: Upload iOS simulator app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtistOS-iOS-simulator-app
+          path: apps/ios/ArtistOSMobile-sim.zip
+          if-no-files-found: error
