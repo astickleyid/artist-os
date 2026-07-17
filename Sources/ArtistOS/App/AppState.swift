@@ -286,6 +286,13 @@ final class AppState: ObservableObject {
         markDirty(.event, event.id.uuidString)
     }
 
+    /// Records a comp render as a factual creative event (Source of Truth:
+    /// events state what happened, never opinion).
+    func recordComp(songID: UUID, sources: Int, segments: Int) {
+        record(songID: songID, target: .master, operation: .structureUpdated,
+               summary: "Comped a new master from \(sources) version\(sources == 1 ? "" : "s") (\(segments) swipe segments).")
+    }
+
     // MARK: - Import
 
     func importFolder(url: URL) {
@@ -929,6 +936,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
 enum SongTab: String, CaseIterable, Identifiable {
     case master = "Master"
+    case comp = "Comp"
     case changes = "Changes"
     case assets = "Assets"
     var id: String { rawValue }

@@ -22,6 +22,8 @@ struct SongWorkspaceView: View {
                         switch state.selectedTab {
                         case .master:
                             MasterCompositionView(song: song)
+                        case .comp:
+                            CompView(song: song)
                         case .changes:
                             CreativeTimelineView(song: song)
                         case .assets:
