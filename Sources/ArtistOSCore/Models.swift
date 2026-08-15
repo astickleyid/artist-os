@@ -10,8 +10,36 @@ public struct ArtistCatalog: Codable, Equatable {
     public var songs: [Song]
     public var assets: [Asset]
     public var events: [CreativeEvent]
-    public init(artistName: String, songs: [Song], assets: [Asset], events: [CreativeEvent]) {
-        self.artistName = artistName; self.songs = songs; self.assets = assets; self.events = events
+    public var decisions: [CreativeDecision]
+
+    public init(
+        artistName: String,
+        songs: [Song],
+        assets: [Asset],
+        events: [CreativeEvent],
+        decisions: [CreativeDecision] = []
+    ) {
+        self.artistName = artistName
+        self.songs = songs
+        self.assets = assets
+        self.events = events
+        self.decisions = decisions
+    }
+
+    // Backward compatible with catalogs written before Decisions became a
+    // first-class Source-of-Truth primitive. Old catalogs decode with an empty
+    // decision history rather than becoming unreadable.
+    private enum CodingKeys: String, CodingKey {
+        case artistName, songs, assets, events, decisions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        artistName = try container.decode(String.self, forKey: .artistName)
+        songs = try container.decode([Song].self, forKey: .songs)
+        assets = try container.decode([Asset].self, forKey: .assets)
+        events = try container.decode([CreativeEvent].self, forKey: .events)
+        decisions = try container.decodeIfPresent([CreativeDecision].self, forKey: .decisions) ?? []
     }
 }
 
@@ -114,6 +142,8 @@ public enum AssetRole: String, Codable, CaseIterable {
     case reference = "Reference"
 }
 
+// A CreativeEvent records WHAT happened. It must remain factual and may be
+// observed automatically. Subjective judgment belongs in CreativeDecision.
 public struct CreativeEvent: Identifiable, Codable, Equatable {
     public var id: UUID
     public var songID: UUID
@@ -130,6 +160,59 @@ public struct CreativeEvent: Identifiable, Codable, Equatable {
         self.operation = operation; self.beforeAssetID = beforeAssetID; self.afterAssetID = afterAssetID
         self.summary = summary; self.confidence = confidence
     }
+}
+
+// A CreativeDecision records WHY the current song state exists. Decisions are
+// artist intent, not inferred facts. Automation may propose a decision, but it
+// becomes accepted truth only after an artist action records it.
+public struct CreativeDecision: Identifiable, Codable, Equatable {
+    public var id: UUID
+    public var songID: UUID
+    public var timestamp: Date
+    public var target: EventTarget
+    public var action: DecisionAction
+    public var selectedAssetID: UUID?
+    public var rejectedAssetIDs: [UUID]
+    public var relatedEventIDs: [UUID]
+    public var reason: String?
+    public var source: DecisionSource
+
+    public init(
+        id: UUID,
+        songID: UUID,
+        timestamp: Date,
+        target: EventTarget,
+        action: DecisionAction,
+        selectedAssetID: UUID?,
+        rejectedAssetIDs: [UUID] = [],
+        relatedEventIDs: [UUID] = [],
+        reason: String? = nil,
+        source: DecisionSource = .artist
+    ) {
+        self.id = id
+        self.songID = songID
+        self.timestamp = timestamp
+        self.target = target
+        self.action = action
+        self.selectedAssetID = selectedAssetID
+        self.rejectedAssetIDs = rejectedAssetIDs
+        self.relatedEventIDs = relatedEventIDs
+        self.reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.source = source
+    }
+}
+
+public enum DecisionAction: String, Codable, CaseIterable {
+    case approved = "Approved"
+    case rejected = "Rejected"
+    case selected = "Selected"
+    case reverted = "Reverted"
+    case deferred = "Deferred"
+}
+
+public enum DecisionSource: String, Codable, CaseIterable {
+    case artist = "Artist"
+    case imported = "Imported History"
 }
 
 public enum EventTarget: String, Codable, CaseIterable {
@@ -154,4 +237,8 @@ public enum EventOperation: String, Codable, CaseIterable {
     case needsDecision = "Needs Decision"
     case approved = "Approved"
     case archived = "Archived"
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
