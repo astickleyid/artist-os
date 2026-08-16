@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
          sync: SyncService = SyncService()) {
         self.store = store
         self.sync = sync
+        let shouldResumeSync = sync.wasEnabledAtInitialization
         if seedIfNeeded, store.isEmpty, !UserDefaults.standard.bool(forKey: Self.seedKey) {
             store.seed(MockCatalog.make())
             UserDefaults.standard.set(true, forKey: Self.seedKey)
@@ -55,11 +56,9 @@ final class AppState: ObservableObject {
         runDecisionEngine()
         queueAnalysis()
         Task { [weak self] in
-            guard let self else { return }
-            if await self.sync.isEnabled {
-                self.syncStatus = .on
-                try? await self.pullFromCloud()
-            }
+            guard let self, shouldResumeSync else { return }
+            self.syncStatus = .on
+            try? await self.pullFromCloud()
         }
 
         if enableWatching {
@@ -131,7 +130,6 @@ final class AppState: ObservableObject {
 
     func deleteSong(id: UUID) {
         guard let si = songIndex(id) else { return }
-        // Stop playback if the active preview belongs to this song.
         if let playingID = audio.playingAssetID,
            catalog.assets.first(where: { $0.id == playingID })?.songID == id {
             audio.stop()
@@ -140,6 +138,8 @@ final class AppState: ObservableObject {
         catalog.songs.remove(at: si)
         catalog.assets.removeAll { $0.songID == id }
         catalog.events.removeAll { $0.songID == id }
+        catalog.decisions.removeAll { $0.songID == id }
+        catalog.masterCompositions.removeAll { $0.songID == id }
         do { try store.delete(songID: id) }
         catch { logger.error("Failed to delete song: \(error.localizedDescription)") }
         if selectedSongID == id {
@@ -199,8 +199,6 @@ final class AppState: ObservableObject {
         )
     }
 
-    /// A/B decision outcome: assigns the winning asset and locks the slot,
-    /// producing Source Selected + Approved events in the change log.
     func resolveDecision(sectionID: UUID, songID: UUID, winner: UUID) {
         assign(assetID: winner, sectionID: sectionID, songID: songID)
         setState(.locked, sectionID: sectionID, songID: songID)
@@ -286,8 +284,6 @@ final class AppState: ObservableObject {
         markDirty(.event, event.id.uuidString)
     }
 
-    /// Records a comp render as a factual creative event (Source of Truth:
-    /// events state what happened, never opinion).
     func recordComp(songID: UUID, sources: Int, segments: Int) {
         record(songID: songID, target: .master, operation: .structureUpdated,
                summary: "Comped a new master from \(sources) version\(sources == 1 ? "" : "s") (\(segments) swipe segments).")
@@ -443,7 +439,7 @@ final class AppState: ObservableObject {
             syncLastError = nil
         } catch {
             syncLastError = error.localizedDescription
-            for item in items { dirtyEntities[item.kind.rawValue + ":" + item.id] = item } // retry next cycle
+            for item in items { dirtyEntities[item.kind.rawValue + ":" + item.id] = item }
         }
     }
 
@@ -539,8 +535,6 @@ final class AppState: ObservableObject {
         runDecisionEngine()
     }
 
-    /// Uploads one asset's local audio so it's available on every synced
-    /// device. Opt-in per VISION.md — most audio stays local-only.
     func uploadAssetToCloud(_ assetID: UUID) async {
         guard let index = catalog.assets.firstIndex(where: { $0.id == assetID }),
               let url = AssetFileResolver.url(for: catalog.assets[index])
@@ -560,7 +554,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Decision engine (VISION.md: the app proposes, the artist approves)
+    // MARK: - Decision engine
 
     func runDecisionEngine(songIDs: [UUID]? = nil) {
         let ids = songIDs ?? catalog.songs.map(\.id)
@@ -596,7 +590,7 @@ final class AppState: ObservableObject {
                summary: "\(asset.title)\(versionText) pinned as current master.")
     }
 
-    // MARK: - Filename re-analysis (fix catalogs imported before intelligence)
+    // MARK: - Filename re-analysis
 
     func reanalyzeCatalog() {
         var movedCount = 0, taggedCount = 0
@@ -614,7 +608,7 @@ final class AppState: ObservableObject {
             guard let homeID = asset.songID,
                   let home = catalog.songs.first(where: { $0.id == homeID }),
                   home.title.caseInsensitiveCompare(parsed.canonical) != .orderedSame,
-                  home.sections.allSatisfy({ $0.assetID != asset.id }) // board-assigned never moves
+                  home.sections.allSatisfy({ $0.assetID != asset.id })
             else { continue }
 
             let targetID: UUID
@@ -678,7 +672,7 @@ final class AppState: ObservableObject {
         watchService.update(folders: watchedFolders)
     }
 
-    // MARK: - Observed changes (the product thesis: events from real activity)
+    // MARK: - Observed changes
 
     private func enqueueWatchedChanges(_ paths: [String]) {
         for path in paths {
@@ -712,8 +706,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Startup / on-demand diff of watched folders against the catalog, so
-    /// activity that happened while the app was closed is still observed.
     func reconcileWatchedFolders() async {
         guard importProgress == nil, !watchedFolders.isEmpty else { return }
         var existingHashes = Set(catalog.assets.compactMap(\.contentHash))
@@ -745,8 +737,6 @@ final class AppState: ObservableObject {
         logger.info("Reconciliation pass complete.")
     }
 
-    /// Handles one on-disk audio file: refreshes a known asset if its
-    /// modification time moved, or imports it as a new observed asset.
     private func observeFile(at rawURL: URL, existingHashes: inout Set<String>) async {
         let url = rawURL.resolvingSymlinksInPath().standardizedFileURL
         let path = url.path
@@ -767,8 +757,6 @@ final class AppState: ObservableObject {
                            confidence: 0.8)
                 }
             } else {
-                // Pre-v3 asset: establish a baseline silently instead of
-                // spamming change events on first launch after upgrade.
                 catalog.assets[index].fileModifiedAt = diskModified
                 persistAsset(catalog.assets[index])
             }
@@ -814,7 +802,6 @@ final class AppState: ObservableObject {
         queueAnalysis()
     }
 
-    /// Records a single archived event per asset when its file disappears.
     private func observeMissing(asset: Asset) {
         guard let songID = asset.songID, !hasArchivedEvent(for: asset.id) else { return }
         record(songID: songID, target: target(forRole: asset.role),
@@ -823,8 +810,6 @@ final class AppState: ObservableObject {
                confidence: 0.8)
     }
 
-    /// Re-reads duration, hash, size, and modification time from disk while
-    /// preserving the asset's identity and curated fields.
     private func refreshAsset(at index: Int) async {
         let old = catalog.assets[index]
         guard let path = old.sourcePath else { return }
@@ -866,8 +851,6 @@ final class AppState: ObservableObject {
         markDirty(.song, toStore.id.uuidString)
     }
 
-    /// Single choke point for asset writes (mirrors persistAsset in docs/app.js):
-    /// stamps updatedAt, keeps catalog.assets authoritative by id, persists.
     private func persistAsset(_ asset: Asset) {
         var toStore = asset
         toStore.updatedAt = Date()
