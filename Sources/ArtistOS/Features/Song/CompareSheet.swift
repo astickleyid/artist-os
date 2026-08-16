@@ -14,6 +14,7 @@ struct CompareSheet: View {
 
     @State private var assetAID: UUID?
     @State private var assetBID: UUID?
+    @State private var reason: String = ""
 
     private var isMasterMode: Bool { section == nil }
     private var candidates: [Asset] {
@@ -28,8 +29,8 @@ struct CompareSheet: View {
                 Text(isMasterMode ? "Current master — \(song.title)" : "Compare — \(section?.name ?? "")")
                     .font(.title3.weight(.black))
                 Text(isMasterMode
-                     ? "Compare any two versions at the same playhead. Pinning marks the song's source of truth."
-                     : "Switch sources without losing the playhead. Choose a side to lock the slot.")
+                     ? "Compare any two versions at the same playhead. Pinning records the artist decision and updates the canonical master."
+                     : "Switch sources without losing the playhead. Choosing a side records the decision and locks the canonical slot.")
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
             }
@@ -45,6 +46,19 @@ struct CompareSheet: View {
                                   selection: $assetAID, shortcut: "a")
                     candidateCard(label: "B", asset: assetB, tint: AOSTheme.blue,
                                   selection: $assetBID, shortcut: "b")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("WHY THIS ONE? · OPTIONAL")
+                        .font(.caption2.weight(.bold))
+                        .tracking(0.8)
+                        .foregroundStyle(AOSTheme.muted)
+                    TextField("Cleaner emotion, tighter pocket, better balance…", text: $reason, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1...3)
+                    Text("This is stored with the decision, not in the factual change log.")
+                        .font(.caption2)
+                        .foregroundStyle(AOSTheme.muted)
                 }
             }
 
@@ -138,7 +152,7 @@ struct CompareSheet: View {
     private func seedDefaults() {
         let ids = candidates.map(\.id)
         if isMasterMode {
-            assetBID = ids.first // latest
+            assetBID = ids.first
             assetAID = (song.masterAssetID.flatMap { m in ids.contains(m) ? m : nil })
                 ?? ids.first { $0 != assetBID } ?? ids.first
         } else {
@@ -148,10 +162,23 @@ struct CompareSheet: View {
     }
 
     private func choose(_ winner: Asset) {
+        let compared = [assetAID, assetBID].compactMap { $0 }
+        let rejected = compared.filter { $0 != winner.id }
         if isMasterMode {
-            state.pinMaster(songID: song.id, assetID: winner.id)
+            state.approveMasterDecision(
+                songID: song.id,
+                assetID: winner.id,
+                rejectedAssetIDs: rejected,
+                reason: reason
+            )
         } else if let section {
-            state.resolveDecision(sectionID: section.id, songID: song.id, winner: winner.id)
+            state.approveSectionDecision(
+                sectionID: section.id,
+                songID: song.id,
+                winner: winner.id,
+                rejectedAssetIDs: rejected,
+                reason: reason
+            )
         }
         close()
     }
