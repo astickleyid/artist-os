@@ -29,7 +29,7 @@ function randomToken(bytes = 32) {
 
 function randomCode(length = 6) {
   const raw = crypto.getRandomValues(new Uint8Array(length));
-  return [...raw].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]].join("");
+  return [...raw].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
 }
 
 function corsHeaders(env, origin) {
@@ -63,7 +63,7 @@ async function nextSeq(env, accountId, count) {
     .bind(count, accountId).run();
   const row = await env.DB.prepare("SELECT seq FROM seq_counter WHERE account_id = ?")
     .bind(accountId).first();
-  return row.seq - count; // base; caller assigns base+1..base+count
+  return row.seq - count;
 }
 
 async function issueToken(env, accountId, label) {
@@ -129,7 +129,7 @@ async function syncPush(env, accountId, request) {
       const existing = await env.DB.prepare(
         "SELECT updated_at FROM entities WHERE account_id = ? AND kind = ? AND id = ?"
       ).bind(accountId, c.kind, c.id).first();
-      if (existing && existing.updated_at >= c.updatedAt) { skipped++; continue; } // LWW
+      if (existing && existing.updated_at >= c.updatedAt) { skipped++; continue; }
       await env.DB.prepare(`
         INSERT INTO entities (account_id, kind, id, updated_at, deleted, data, seq)
         VALUES (?, ?, ?, ?, ?, ?, ?)
