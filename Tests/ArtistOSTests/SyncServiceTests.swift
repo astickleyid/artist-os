@@ -60,7 +60,8 @@ final class SyncServiceTests: XCTestCase {
 
         XCTAssertFalse(service.wasEnabledAtInitialization)
         _ = try await service.enableSync()
-        XCTAssertTrue(await service.isEnabled)
+        let enabledAfterManual = await service.isEnabled
+        XCTAssertTrue(enabledAfterManual)
         XCTAssertFalse(
             service.wasEnabledAtInitialization,
             "manual enable must not retroactively look like credentials existed at launch"
