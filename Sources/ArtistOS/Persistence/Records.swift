@@ -217,3 +217,53 @@ struct EventRecord: Codable, FetchableRecord, PersistableRecord {
         )
     }
 }
+
+struct DecisionRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "decision"
+    var id: UUID
+    var songID: UUID
+    var timestamp: Date
+    var target: String
+    var action: String
+    var selectedAssetID: UUID?
+    var rejectedAssetIDs: String
+    var relatedEventIDs: String
+    var reason: String?
+    var source: String
+
+    init(_ decision: CreativeDecision) {
+        id = decision.id
+        songID = decision.songID
+        timestamp = decision.timestamp
+        target = decision.target.rawValue
+        action = decision.action.rawValue
+        selectedAssetID = decision.selectedAssetID
+        rejectedAssetIDs = Self.encodeUUIDs(decision.rejectedAssetIDs)
+        relatedEventIDs = Self.encodeUUIDs(decision.relatedEventIDs)
+        reason = decision.reason
+        source = decision.source.rawValue
+    }
+
+    func toDomain() -> CreativeDecision {
+        CreativeDecision(
+            id: id,
+            songID: songID,
+            timestamp: timestamp,
+            target: EventTarget(rawValue: target) ?? .song,
+            action: DecisionAction(rawValue: action) ?? .selected,
+            selectedAssetID: selectedAssetID,
+            rejectedAssetIDs: Self.decodeUUIDs(rejectedAssetIDs),
+            relatedEventIDs: Self.decodeUUIDs(relatedEventIDs),
+            reason: reason,
+            source: DecisionSource(rawValue: source) ?? .artist
+        )
+    }
+
+    private static func encodeUUIDs(_ ids: [UUID]) -> String {
+        ids.map(\.uuidString).joined(separator: ",")
+    }
+
+    private static func decodeUUIDs(_ value: String) -> [UUID] {
+        value.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+    }
+}

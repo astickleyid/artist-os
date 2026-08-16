@@ -45,6 +45,9 @@ final class CatalogStore {
                     .fetchAll(db)
                 let assetRecords = try AssetRecord.fetchAll(db)
                 let eventRecords = try EventRecord.fetchAll(db)
+                let decisionRecords = try DecisionRecord
+                    .order(Column("timestamp"))
+                    .fetchAll(db)
 
                 var sectionsBySong: [UUID: [MasterSection]] = [:]
                 for record in sectionRecords {
@@ -56,12 +59,13 @@ final class CatalogStore {
                     artistName: artistName,
                     songs: songs,
                     assets: assetRecords.map { $0.toDomain() },
-                    events: eventRecords.map { $0.toDomain() }
+                    events: eventRecords.map { $0.toDomain() },
+                    decisions: decisionRecords.map { $0.toDomain() }
                 )
             }
         } catch {
             logger.error("Failed to load catalog: \(error.localizedDescription)")
-            return ArtistCatalog(artistName: artistName, songs: [], assets: [], events: [])
+            return ArtistCatalog(artistName: artistName, songs: [], assets: [], events: [], decisions: [])
         }
     }
 
@@ -93,6 +97,12 @@ final class CatalogStore {
     func append(event: CreativeEvent) throws {
         try database.dbQueue.write { db in
             try EventRecord(event).save(db)
+        }
+    }
+
+    func append(decision: CreativeDecision) throws {
+        try database.dbQueue.write { db in
+            try DecisionRecord(decision).save(db)
         }
     }
 
@@ -132,6 +142,9 @@ final class CatalogStore {
                 }
                 for event in catalog.events {
                     try EventRecord(event).save(db)
+                }
+                for decision in catalog.decisions {
+                    try DecisionRecord(decision).save(db)
                 }
             }
         } catch {
