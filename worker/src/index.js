@@ -1,7 +1,7 @@
 /* Artist OS Sync Worker — metadata-first sync + selective audio blobs.
    Zero dependencies. Tokens stored SHA-256 hashed. Device-link pairing. */
 
-const KINDS = new Set(["song", "asset", "event"]);
+const KINDS = new Set(["song", "asset", "event", "decision", "masterComposition"]);
 const MAX_BATCH = 500;
 const MAX_DATA_BYTES = 200_000;
 const MAX_BLOB_BYTES = 150 * 1024 * 1024;
@@ -63,7 +63,7 @@ async function nextSeq(env, accountId, count) {
     .bind(count, accountId).run();
   const row = await env.DB.prepare("SELECT seq FROM seq_counter WHERE account_id = ?")
     .bind(accountId).first();
-  return row.seq - count; // base; caller assigns base+1..base+count
+  return row.seq - count;
 }
 
 async function issueToken(env, accountId, label) {
@@ -129,7 +129,7 @@ async function syncPush(env, accountId, request) {
       const existing = await env.DB.prepare(
         "SELECT updated_at FROM entities WHERE account_id = ? AND kind = ? AND id = ?"
       ).bind(accountId, c.kind, c.id).first();
-      if (existing && existing.updated_at >= c.updatedAt) { skipped++; continue; } // LWW
+      if (existing && existing.updated_at >= c.updatedAt) { skipped++; continue; }
       await env.DB.prepare(`
         INSERT INTO entities (account_id, kind, id, updated_at, deleted, data, seq)
         VALUES (?, ?, ?, ?, ?, ?, ?)
