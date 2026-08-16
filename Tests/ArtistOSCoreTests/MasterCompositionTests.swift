@@ -42,7 +42,23 @@ final class MasterCompositionTests: XCTestCase {
         XCTAssertEqual(section.selection(.sourceAsset)?.referenceID, second)
     }
 
-    func testLegacySongProjectionPreservesCurrentTruth() {
+    func testInitializerNormalizesDuplicateKindsToLatestBinding() {
+        let first = UUID()
+        let second = UUID()
+        let section = MasterCompositionSection(
+            name: "Hook",
+            role: "Lead",
+            selections: [
+                MasterSelection(kind: .sourceAsset, referenceID: first),
+                MasterSelection(kind: .sourceAsset, referenceID: second)
+            ]
+        )
+
+        XCTAssertEqual(section.selections.filter { $0.kind == .sourceAsset }.count, 1)
+        XCTAssertEqual(section.selection(.sourceAsset)?.referenceID, second)
+    }
+
+    func testLegacySongProjectionPreservesCurrentTruthAndStableIdentity() {
         let assetID = UUID()
         let masterID = UUID()
         let sectionID = UUID()
@@ -71,7 +87,10 @@ final class MasterCompositionTests: XCTestCase {
         )
 
         let composition = MasterComposition.projected(from: song)
+        let projectedAgain = MasterComposition.projected(from: song)
 
+        XCTAssertEqual(composition.id, song.id)
+        XCTAssertEqual(projectedAgain.id, composition.id)
         XCTAssertEqual(composition.songID, song.id)
         XCTAssertEqual(composition.outputAssetID, masterID)
         XCTAssertEqual(composition.updatedAt, updated)
