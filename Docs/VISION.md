@@ -1,5 +1,7 @@
 # Artist OS — Vision & Canonical Logic Spec
 
+> Docs/SOURCE-OF-TRUTH.md is the architectural authority. This file is the working logic and implementation-status spec; where they differ, SOURCE-OF-TRUTH wins.
+
 ## Why this exists
 Artists drown in versions, bounces, takes, and unfinished ideas. Every tool
 makes the artist do the filing. Artist OS inverts it.
@@ -9,9 +11,11 @@ makes the artist do the filing. Artist OS inverts it.
 observed creative work. The app proposes; the artist approves.
 
 ## Primitives
-Song (living object) · Master Composition (structural source of truth) ·
-Asset (real file, optionally a version in a stack) · Creative Event
-(target + operation record, attributed You / Observed).
+Song (living object) · Master Composition (current approved creative blueprint) ·
+Asset (immutable evidence/file) · Creative Event (factual WHAT happened) ·
+Creative Decision (artist-intent WHY the current state exists).
+
+Versions are derived views over assets + creative history. They are not primary domain objects.
 
 ## Intelligence layers (build order)
 1. **Filename intelligence** — canonical titles, version stacks, role inference. ✅ web ✅ macOS
@@ -20,11 +24,13 @@ Asset (real file, optionally a version in a stack) · Creative Event
    (escalate-only, fires once). D2: a stack of ≥2 **full-mix** versions
    requires a pinned master; a newer version than the pinned master reopens
    the question. Surfaced as a Decide inbox; resolved by A/B. ✅ web ✅ macOS
-3. **Audio intelligence** — BPM/key detection feeding stacks and DNA. ⏳
-4. **Creative DNA** — cross-song patterns once history accumulates. ⏳
-5. **Recap** — periodic creative journal generated from events. ⏳
+3. **Audio intelligence** — BPM/key detection feeding stacks and later DNA. ✅ web ✅ macOS
+4. **Master Composition migration** — move from the legacy one-asset-per-section shape to layered source / processing / automation / comp selections without breaking existing catalogs. 🚧
+5. **Decision history integration** — first-class decisions persisted, synced, and surfaced in approval flows so events remain factual and intent remains separate. 🚧
+6. **Creative DNA** — cross-song patterns once enough trustworthy history accumulates. ⏳
+7. **Recap** — periodic creative journal generated from events + decisions. ⏳
 
-## Canonical logic (both platforms MUST match; vectors in tests)
+## Canonical logic (platform implementations MUST match; vectors in tests)
 - Version tokens: v#, (#), final, master, mix#, take#, bounce, draft, rough,
   demo, edit, copy, alt, rev — stripped iteratively from filename tails,
   including version-bearing parentheticals. Role words are never version tokens.
@@ -33,32 +39,46 @@ Asset (real file, optionally a version in a stack) · Creative Event
 - Stack order: vOrder desc → file mtime desc → import time desc. Top = Latest.
 - Master stack = full-mix versions only.
 - Dedup: content hash (size + head/tail SHA-256 on web; streaming SHA-256 native).
-- Auto events are attributed Observed and never downgrade artist decisions.
+- Auto events are factual/Observed and never downgrade artist decisions.
+- Decisions are separate from events: events record WHAT; decisions preserve WHY.
+- Master Composition is the only current creative source of truth. Bounces and mixes are assets/output evidence, not the canonical song object.
 
 ## Sync (Cloudflare — live, metadata-first)
-Architecture per owner decision (Cloudflare over CloudKit — see README): one
-Worker (worker/src/index.js) in front of D1 (metadata) + R2 (opt-in audio).
-- **Metadata-first**: songs, sections, events, version stacks, and pins sync
-  automatically and cheaply (KBs). Audio stays local until a person explicitly
-  taps "Make available everywhere" on an asset — the Frame.io/Splice pattern.
+Architecture per owner decision: one Worker (worker/src/index.js) in front of D1
+(metadata) + R2 (opt-in audio).
+- **Metadata-first**: songs, sections, events, version metadata, and pins sync
+  automatically and cheaply (KBs). First-class Decisions and Master Composition
+  must join this contract as their migrations land.
+- **Audio stays local by default** until a person explicitly chooses to make an
+  asset available everywhere — the Frame.io/Splice pattern.
 - **Auth**: no passwords. Creating an account issues a bearer token; a second
   device joins the same account via a 6-character, single-use, 5-minute link
   code (`/v1/link/start` + `/v1/link/claim`) — tokens are stored server-side
   as SHA-256 hashes only.
 - **Conflict resolution**: last-write-wins by `updatedAt`, per-entity
-  (`kind:id`), with a monotonic per-account `seq` cursor for incremental
-  pulls. A tie favors the local write (it just happened in the same instant).
+  (`kind:id`), with a monotonic per-account `seq` cursor for incremental pulls.
+  A tie favors the local write made at the same instant.
 - **Contract**: worker/schema.sql is the source of truth for the wire shape;
-  docs/sync.js (web) and SyncLogic.swift + SyncService.swift (macOS)
-  independently implement the same client contract against it — proven by
-  a real two-device e2e test that routes a live browser through the actual
-  worker module (tests/web/e2e.js) and by SyncServiceTests.swift on macOS.
+  docs/sync.js (web) and SyncLogic.swift + SyncService.swift (native)
+  independently implement the same client contract and are exercised by tests.
 
 ## Platform roles
-- **macOS native**: the workstation. True FSEvents watching, deep catalog.
-- **Web (local-first)**: distribution + capture surface; blueprint for the
-  iPhone companion. No backend; audio never leaves the device.
-- **Sync (deferred, next decision)**: CloudKit vs. Cloudflare stack — owner call.
+- **macOS native**: primary workstation. True FSEvents watching, deep catalog,
+  native playback/preview, Quick Swipe Comp, and the canonical high-fidelity workspace.
+- **iPhone companion**: capture, triage, decisions, and synced access to the catalog;
+  not a replacement for the workstation.
+- **Web**: local-first proving/distribution surface and parity reference for shared logic.
+- **Cloudflare sync**: active metadata transport with opt-in audio blobs. It is no longer a deferred architecture decision.
+
+## Current architectural migration order
+1. Persist Creative Decisions independently from Creative Events.
+2. Establish layered Master Composition as the canonical core model.
+3. Persist Master Composition without destroying legacy catalogs.
+4. Wire Decisions into A/B, pin-master, and other approval flows.
+5. Add Decisions + Master Composition to sync contract and conflict handling.
+6. Migrate native macOS workspace to read/write the canonical model.
+7. Retire legacy `Song.sections[].assetID` only after migration tests prove existing catalogs are safe.
 
 ## Deferred by design
-Batch render engine · DSP variants · collaboration · predictive modeling.
+Batch DSP variant generation · collaboration · predictive career modeling.
+These stay behind core catalog truth, version safety, native product quality, and migration correctness.
