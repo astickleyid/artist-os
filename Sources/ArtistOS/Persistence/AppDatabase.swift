@@ -136,6 +136,24 @@ final class AppDatabase {
             }
         }
 
+        // Decisions are intentionally separate from factual CreativeEvents.
+        // Events answer WHAT happened; decisions preserve WHY the current state exists.
+        migrator.registerMigration("v7") { db in
+            try db.create(table: "decision") { t in
+                t.column("id", .text).primaryKey()
+                t.column("songID", .text).notNull().indexed()
+                    .references("song", onDelete: .cascade)
+                t.column("timestamp", .datetime).notNull()
+                t.column("target", .text).notNull()
+                t.column("action", .text).notNull()
+                t.column("selectedAssetID", .text)
+                t.column("rejectedAssetIDs", .text).notNull()
+                t.column("relatedEventIDs", .text).notNull()
+                t.column("reason", .text)
+                t.column("source", .text).notNull()
+            }
+        }
+
         return migrator
     }
 }
