@@ -117,22 +117,36 @@ final class CatalogStore {
     /// legacy Song.sections are deliberately untouched during migration.
     func upsert(masterComposition: MasterComposition) throws {
         try database.dbQueue.write { db in
-            // songID is unique; deleting first also safely handles a future
-            // persisted composition ID that differs from the legacy song ID.
-            try MasterCompositionRecord
-                .filter(Column("songID") == masterComposition.songID)
-                .deleteAll(db)
-            try MasterCompositionRecord(masterComposition).save(db)
+            try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
 
-            for (position, section) in masterComposition.sections.enumerated() {
-                try MasterCompositionSectionRecord(
-                    section,
-                    compositionID: masterComposition.id,
-                    position: position
-                ).save(db)
-                for selection in section.selections {
-                    try MasterSelectionRecord(selection, sectionID: section.id).save(db)
-                }
+    /// A decision and the canonical state it authorizes are one unit of truth.
+    /// If either write fails, GRDB rolls the transaction back so a Decision can
+    /// never claim a source is current while the Master Composition says otherwise.
+    func commit(decision: CreativeDecision, masterComposition: MasterComposition) throws {
+        try database.dbQueue.write { db in
+            try DecisionRecord(decision).save(db)
+            try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
+
+    private func replaceMasterComposition(_ masterComposition: MasterComposition, in db: Database) throws {
+        // songID is unique; deleting first also safely handles a future
+        // persisted composition ID that differs from the legacy song ID.
+        try MasterCompositionRecord
+            .filter(Column("songID") == masterComposition.songID)
+            .deleteAll(db)
+        try MasterCompositionRecord(masterComposition).save(db)
+
+        for (position, section) in masterComposition.sections.enumerated() {
+            try MasterCompositionSectionRecord(
+                section,
+                compositionID: masterComposition.id,
+                position: position
+            ).save(db)
+            for selection in section.selections {
+                try MasterSelectionRecord(selection, sectionID: section.id).save(db)
             }
         }
     }
@@ -203,17 +217,7 @@ final class CatalogStore {
                     try DecisionRecord(decision).save(db)
                 }
                 for composition in catalog.masterCompositions {
-                    try MasterCompositionRecord(composition).save(db)
-                    for (position, section) in composition.sections.enumerated() {
-                        try MasterCompositionSectionRecord(
-                            section,
-                            compositionID: composition.id,
-                            position: position
-                        ).save(db)
-                        for selection in section.selections {
-                            try MasterSelectionRecord(selection, sectionID: section.id).save(db)
-                        }
-                    }
+                    try replaceMasterComposition(composition, in: db)
                 }
             }
         } catch {
