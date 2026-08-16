@@ -11,26 +11,29 @@ public struct ArtistCatalog: Codable, Equatable {
     public var assets: [Asset]
     public var events: [CreativeEvent]
     public var decisions: [CreativeDecision]
+    public private(set) var masterCompositions: [MasterComposition]
 
     public init(
         artistName: String,
         songs: [Song],
         assets: [Asset],
         events: [CreativeEvent],
-        decisions: [CreativeDecision] = []
+        decisions: [CreativeDecision] = [],
+        masterCompositions: [MasterComposition] = []
     ) {
         self.artistName = artistName
         self.songs = songs
         self.assets = assets
         self.events = events
         self.decisions = decisions
+        self.masterCompositions = Self.normalizedMasterCompositions(masterCompositions)
     }
 
-    // Backward compatible with catalogs written before Decisions became a
-    // first-class Source-of-Truth primitive. Old catalogs decode with an empty
-    // decision history rather than becoming unreadable.
+    // Backward compatible with catalogs written before Decisions and Master
+    // Compositions became first-class Source-of-Truth primitives. Old catalogs
+    // remain readable and can project legacy Song.sections on demand.
     private enum CodingKeys: String, CodingKey {
-        case artistName, songs, assets, events, decisions
+        case artistName, songs, assets, events, decisions, masterCompositions
     }
 
     public init(from decoder: Decoder) throws {
@@ -40,6 +43,52 @@ public struct ArtistCatalog: Codable, Equatable {
         assets = try container.decode([Asset].self, forKey: .assets)
         events = try container.decode([CreativeEvent].self, forKey: .events)
         decisions = try container.decodeIfPresent([CreativeDecision].self, forKey: .decisions) ?? []
+        let decodedCompositions = try container.decodeIfPresent(
+            [MasterComposition].self,
+            forKey: .masterCompositions
+        ) ?? []
+        masterCompositions = Self.normalizedMasterCompositions(decodedCompositions)
+    }
+
+    /// Returns the persisted canonical composition when available. Existing
+    /// catalogs transparently project their legacy Song state until migration
+    /// writes an explicit MasterComposition.
+    public func masterComposition(for songID: UUID) -> MasterComposition? {
+        if let persisted = masterCompositions.first(where: { $0.songID == songID }) {
+            return persisted
+        }
+        guard let song = songs.first(where: { $0.id == songID }) else { return nil }
+        return MasterComposition.projected(from: song)
+    }
+
+    /// Replaces the canonical composition for its Song. This mirrors the unique
+    /// songID constraint in SQLite so in-memory truth cannot diverge from disk.
+    public mutating func setMasterComposition(_ composition: MasterComposition) {
+        masterCompositions.removeAll { $0.songID == composition.songID }
+        masterCompositions.append(composition)
+    }
+
+    public mutating func removeMasterComposition(for songID: UUID) {
+        masterCompositions.removeAll { $0.songID == songID }
+    }
+
+    private static func normalizedMasterCompositions(
+        _ compositions: [MasterComposition]
+    ) -> [MasterComposition] {
+        var bySong: [UUID: MasterComposition] = [:]
+        var order: [UUID] = []
+        for composition in compositions {
+            if bySong[composition.songID] == nil {
+                order.append(composition.songID)
+                bySong[composition.songID] = composition
+                continue
+            }
+            if let existing = bySong[composition.songID],
+               composition.updatedAt >= existing.updatedAt {
+                bySong[composition.songID] = composition
+            }
+        }
+        return order.compactMap { bySong[$0] }
     }
 }
 

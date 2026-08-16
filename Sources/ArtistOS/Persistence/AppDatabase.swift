@@ -154,6 +154,49 @@ final class AppDatabase {
             }
         }
 
+        // The canonical Master Composition is persisted independently from the
+        // legacy Song.sections representation. One composition belongs to one Song;
+        // sections and typed selections cascade with it. `referenceID` is not an
+        // asset FK because processing/automation/comp references are intentionally
+        // extensible immutable snapshot IDs.
+        migrator.registerMigration("v8") { db in
+            try db.create(table: "masterComposition") { t in
+                t.column("id", .text).primaryKey()
+                t.column("songID", .text).notNull().unique().indexed()
+                    .references("song", onDelete: .cascade)
+                t.column("outputAssetID", .text)
+                t.column("updatedAt", .datetime).notNull()
+            }
+
+            try db.create(table: "masterCompositionSection") { t in
+                t.column("id", .text).primaryKey()
+                t.column("compositionID", .text).notNull().indexed()
+                    .references("masterComposition", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("name", .text).notNull()
+                t.column("role", .text).notNull()
+                t.column("state", .text).notNull()
+                t.column("confidence", .double).notNull()
+                t.column("note", .text).notNull()
+            }
+
+            try db.create(table: "masterSelection") { t in
+                t.column("id", .text).primaryKey()
+                t.column("sectionID", .text).notNull().indexed()
+                    .references("masterCompositionSection", onDelete: .cascade)
+                t.column("kind", .text).notNull()
+                t.column("referenceID", .text).notNull()
+                t.column("decisionID", .text)
+                t.column("selectedAt", .datetime).notNull()
+            }
+            try db.create(
+                index: "masterSelection_section_kind",
+                on: "masterSelection",
+                columns: ["sectionID", "kind"],
+                unique: true
+            )
+        }
+
         return migrator
     }
 }

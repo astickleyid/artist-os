@@ -53,16 +53,28 @@ public actor SyncService {
     private let credentialsKey = "artistos.sync.credentials"
     private(set) var credentials: Credentials?
 
+    /// Immutable launch-state snapshot. AppState uses this to decide whether
+    /// it should resume an already-linked account on startup. Keeping this
+    /// separate from `isEnabled` prevents a race where a manual enable that
+    /// happens just after AppState initialization is mistaken for pre-existing
+    /// credentials by the deferred startup task.
+    public nonisolated let wasEnabledAtInitialization: Bool
+
     public init(baseURL: URL = URL(string: "https://artist-os-sync.astickley9.workers.dev")!,
          client: SyncHTTPClient = URLSessionHTTPClient(),
          defaults: UserDefaults = .standard) {
         self.baseURL = baseURL
         self.client = client
         self.defaults = defaults
+        let loadedCredentials: Credentials?
         if let data = defaults.data(forKey: credentialsKey),
            let creds = try? JSONDecoder().decode(Credentials.self, from: data) {
-            credentials = creds
+            loadedCredentials = creds
+        } else {
+            loadedCredentials = nil
         }
+        self.credentials = loadedCredentials
+        self.wasEnabledAtInitialization = loadedCredentials != nil
     }
 
     public var isEnabled: Bool { credentials != nil }
