@@ -105,11 +105,7 @@ final class CatalogStore {
 
     func upsert(song: Song) throws {
         try database.dbQueue.write { db in
-            try SongRecord(song).save(db)
-            try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
-            for (index, section) in song.sections.enumerated() {
-                try SectionRecord(section, songID: song.id, position: index).save(db)
-            }
+            try saveSong(song, in: db)
         }
     }
 
@@ -117,22 +113,54 @@ final class CatalogStore {
     /// legacy Song.sections are deliberately untouched during migration.
     func upsert(masterComposition: MasterComposition) throws {
         try database.dbQueue.write { db in
-            // songID is unique; deleting first also safely handles a future
-            // persisted composition ID that differs from the legacy song ID.
-            try MasterCompositionRecord
-                .filter(Column("songID") == masterComposition.songID)
-                .deleteAll(db)
-            try MasterCompositionRecord(masterComposition).save(db)
+            try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
 
-            for (position, section) in masterComposition.sections.enumerated() {
-                try MasterCompositionSectionRecord(
-                    section,
-                    compositionID: masterComposition.id,
-                    position: position
-                ).save(db)
-                for selection in section.selections {
-                    try MasterSelectionRecord(selection, sectionID: section.id).save(db)
-                }
+    /// One explicit artist approval changes four views of the same truth:
+    /// legacy Song state (during migration), factual Events, the Decision that
+    /// explains intent, and canonical Master Composition. They either all land
+    /// in SQLite or none of them do.
+    func commitApproval(
+        song: Song,
+        events: [CreativeEvent],
+        decision: CreativeDecision,
+        masterComposition: MasterComposition
+    ) throws {
+        try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            for event in events {
+                try EventRecord(event).save(db)
+            }
+            try DecisionRecord(decision).save(db)
+            try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
+
+    private func saveSong(_ song: Song, in db: Database) throws {
+        try SongRecord(song).save(db)
+        try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
+        for (index, section) in song.sections.enumerated() {
+            try SectionRecord(section, songID: song.id, position: index).save(db)
+        }
+    }
+
+    private func replaceMasterComposition(_ masterComposition: MasterComposition, in db: Database) throws {
+        // songID is unique; deleting first also safely handles a future
+        // persisted composition ID that differs from the legacy song ID.
+        try MasterCompositionRecord
+            .filter(Column("songID") == masterComposition.songID)
+            .deleteAll(db)
+        try MasterCompositionRecord(masterComposition).save(db)
+
+        for (position, section) in masterComposition.sections.enumerated() {
+            try MasterCompositionSectionRecord(
+                section,
+                compositionID: masterComposition.id,
+                position: position
+            ).save(db)
+            for selection in section.selections {
+                try MasterSelectionRecord(selection, sectionID: section.id).save(db)
             }
         }
     }
@@ -188,10 +216,7 @@ final class CatalogStore {
         do {
             try database.dbQueue.write { db in
                 for song in catalog.songs {
-                    try SongRecord(song).save(db)
-                    for (index, section) in song.sections.enumerated() {
-                        try SectionRecord(section, songID: song.id, position: index).save(db)
-                    }
+                    try saveSong(song, in: db)
                 }
                 for asset in catalog.assets {
                     try AssetRecord(asset).save(db)
@@ -203,17 +228,7 @@ final class CatalogStore {
                     try DecisionRecord(decision).save(db)
                 }
                 for composition in catalog.masterCompositions {
-                    try MasterCompositionRecord(composition).save(db)
-                    for (position, section) in composition.sections.enumerated() {
-                        try MasterCompositionSectionRecord(
-                            section,
-                            compositionID: composition.id,
-                            position: position
-                        ).save(db)
-                        for selection in section.selections {
-                            try MasterSelectionRecord(selection, sectionID: section.id).save(db)
-                        }
-                    }
+                    try replaceMasterComposition(composition, in: db)
                 }
             }
         } catch {
