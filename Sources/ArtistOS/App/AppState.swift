@@ -29,7 +29,7 @@ final class AppState: ObservableObject {
     @Published var syncStatus: SyncStatus = .off
     @Published var syncLastError: String?
 
-    private let store: CatalogStore
+    let store: CatalogStore
     private let watchService = FolderWatchService()
     private var importTask: Task<Void, Never>?
     private var pendingWatchPaths: Set<String> = []
