@@ -139,7 +139,7 @@ final class AppState: ObservableObject {
         catalog.assets.removeAll { $0.songID == id }
         catalog.events.removeAll { $0.songID == id }
         catalog.decisions.removeAll { $0.songID == id }
-        catalog.masterCompositions.removeAll { $0.songID == id }
+        catalog.removeMasterComposition(for: id)
         do { try store.delete(songID: id) }
         catch { logger.error("Failed to delete song: \(error.localizedDescription)") }
         if selectedSongID == id {
