@@ -87,6 +87,11 @@ final class MasterCompositionPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.sections[0].selection(.sourceAsset)?.decisionID, decisionID)
         XCTAssertEqual(loaded.sections[0].selection(.processingSnapshot)?.referenceID, processingID)
         XCTAssertEqual(loaded.sections[0].selection(.compRecipe)?.referenceID, compRecipeID)
+        XCTAssertEqual(
+            loaded.sections[0].selections.map(\.kind),
+            [.compRecipe, .processingSnapshot, .sourceAsset],
+            "equal timestamps must reconstruct in a deterministic order"
+        )
         if let loadedSelectedAt = loaded.sections[0].selection(.sourceAsset)?.selectedAt {
             assertDateEqual(loadedSelectedAt, selectedAt)
         } else {
