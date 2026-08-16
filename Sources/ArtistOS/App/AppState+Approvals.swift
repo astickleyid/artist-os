@@ -80,9 +80,6 @@ extension AppState {
             source: .artist
         )
 
-        // Start from persisted canonical truth when it exists. Otherwise project
-        // the UPDATED legacy song so this explicit approval becomes the clean
-        // migration boundary from legacy state to canonical state.
         var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
             ?? MasterComposition.projected(from: updatedSong)
         guard let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
@@ -117,6 +114,7 @@ extension AppState {
         catalog.events.append(contentsOf: events)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
+        syncCurrentlySupportedApprovalState(song: updatedSong, events: events)
     }
 
     /// Commits an artist's chosen current full-song master. The canonical
@@ -190,6 +188,25 @@ extension AppState {
         catalog.events.append(event)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
+        syncCurrentlySupportedApprovalState(song: updatedSong, events: [event])
+    }
+
+    /// Until migration step 5 adds Decision and Master Composition to the wire
+    /// contract, preserve the existing cloud-visible Song/Event behavior for
+    /// approvals. A failed push is surfaced instead of pretending cloud state
+    /// is current. Canonical objects remain safely persisted locally.
+    private func syncCurrentlySupportedApprovalState(song: Song, events: [CreativeEvent]) {
+        guard syncStatus == .on else { return }
+        let changes = [SyncLogic.change(forSong: song)] + events.map(SyncLogic.change(forEvent:))
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.sync.push(changes: changes)
+                self.syncLastError = nil
+            } catch {
+                self.syncLastError = error.localizedDescription
+            }
+        }
     }
 
     private func normalizedRejectedAssetIDs(
