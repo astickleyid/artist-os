@@ -53,27 +53,16 @@ public actor SyncService {
     private let credentialsKey = "artistos.sync.credentials"
     private(set) var credentials: Credentials?
 
-    /// Snapshot of whether this service already had credentials when it was created.
-    /// App startup uses this instead of asking `isEnabled` from a delayed Task, which
-    /// could otherwise race with a person enabling sync moments after launch and
-    /// accidentally trigger a second pull.
-    public nonisolated let wasEnabledAtInitialization: Bool
-
     public init(baseURL: URL = URL(string: "https://artist-os-sync.astickley9.workers.dev")!,
          client: SyncHTTPClient = URLSessionHTTPClient(),
          defaults: UserDefaults = .standard) {
         self.baseURL = baseURL
         self.client = client
         self.defaults = defaults
-        let loadedCredentials: Credentials?
         if let data = defaults.data(forKey: credentialsKey),
            let creds = try? JSONDecoder().decode(Credentials.self, from: data) {
-            loadedCredentials = creds
-        } else {
-            loadedCredentials = nil
+            credentials = creds
         }
-        self.credentials = loadedCredentials
-        self.wasEnabledAtInitialization = loadedCredentials != nil
     }
 
     public var isEnabled: Bool { credentials != nil }
@@ -141,15 +130,16 @@ public actor SyncService {
         let (data, status, _) = try await client.send(request("/v1/link/start", method: "POST"))
         guard status == 200 else { throw SyncError.server(status, errorMessage(from: data)) }
         let body = try jsonObject(from: data)
-        guard let code = body["code"] as? String,
-              let expires = (body["expiresInSeconds"] as? NSNumber)?.intValue else { throw SyncError.malformedBody }
-        return (code, expires)
+        guard let code = body["code"] as? String else { throw SyncError.malformedBody }
+        return (code, (body["expiresInSeconds"] as? NSNumber)?.intValue ?? 300)
     }
 
     @discardableResult
     public func linkClaim(code: String) async throws -> Credentials {
-        let cleaned = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let (data, status, _) = try await client.send(request("/v1/link/claim", method: "POST", jsonBody: ["code": cleaned]))
+        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let (data, status, _) = try await client.send(
+            request("/v1/link/claim", method: "POST", jsonBody: ["code": trimmed])
+        )
         guard status == 200 else { throw SyncError.server(status, errorMessage(from: data)) }
         let body = try jsonObject(from: data)
         guard let accountId = body["accountId"] as? String, let token = body["token"] as? String else {
@@ -163,55 +153,68 @@ public actor SyncService {
 
     public func disableAndDeleteAccount() async throws {
         guard isEnabled else { return }
-        let (data, status, _) = try await client.send(request("/v1/account", method: "DELETE"))
-        guard (200..<300).contains(status) else { throw SyncError.server(status, errorMessage(from: data)) }
+        _ = try? await client.send(request("/v1/account", method: "DELETE"))
         credentials = nil
         defaults.removeObject(forKey: credentialsKey)
     }
 
-    // MARK: - Metadata push / pull
+    // MARK: - Push / pull
 
-    @discardableResult
-    public func push(changes: [SyncLogic.JSONDict]) async throws -> Double {
+    public func push(changes: [SyncLogic.JSONDict]) async throws -> (applied: Int, skipped: Int) {
         guard isEnabled else { throw SyncError.notEnabled }
-        guard !changes.isEmpty else { return currentSeq }
-        var latest = currentSeq
-        for start in stride(from: 0, to: changes.count, by: 200) {
-            let end = min(start + 200, changes.count)
-            let batch = Array(changes[start..<end])
-            let (data, status, _) = try await client.send(request("/v1/sync/push", method: "POST", jsonBody: ["changes": batch]))
+        var applied = 0, skipped = 0
+        for batch in stride(from: 0, to: changes.count, by: 200) {
+            let slice = Array(changes[batch..<min(batch + 200, changes.count)])
+            let (data, status, _) = try await client.send(
+                request("/v1/sync/push", method: "POST", jsonBody: ["changes": slice])
+            )
             guard status == 200 else { throw SyncError.server(status, errorMessage(from: data)) }
             let body = try jsonObject(from: data)
-            latest = max(latest, (body["seq"] as? NSNumber)?.doubleValue ?? latest)
+            applied += (body["applied"] as? NSNumber)?.intValue ?? 0
+            skipped += (body["skipped"] as? NSNumber)?.intValue ?? 0
         }
-        setSeq(latest)
-        return latest
+        return (applied, skipped)
     }
 
+    /// Pulls all pages of remote changes since the last cursor and returns
+    /// them flattened, advancing and persisting the cursor after each page
+    /// so a mid-pagination network failure doesn't lose already-fetched
+    /// progress. Returns a plain array (not a callback) specifically so
+    /// applying changes never has to cross back into the caller's actor
+    /// isolation from inside this actor's execution.
     public func pullAll() async throws -> [SyncLogic.JSONDict] {
         guard isEnabled else { throw SyncError.notEnabled }
         var all: [SyncLogic.JSONDict] = []
-        var cursor = currentSeq
-        while true {
-            let (data, status, _) = try await client.send(request("/v1/sync/pull?since=\(cursor)", method: "GET"))
+        var hasMore = true
+        while hasMore {
+            let (data, status, _) = try await client.send(
+                request("/v1/sync/pull?since=\(currentSeq)", method: "GET")
+            )
             guard status == 200 else { throw SyncError.server(status, errorMessage(from: data)) }
             let body = try jsonObject(from: data)
-            let changes = body["changes"] as? [SyncLogic.JSONDict] ?? []
-            all.append(contentsOf: changes)
-            let next = (body["seq"] as? NSNumber)?.doubleValue ?? cursor
-            let hasMore = (body["hasMore"] as? Bool) ?? false
-            cursor = next
-            if !hasMore { break }
+            for case let change as SyncLogic.JSONDict in (body["changes"] as? [Any] ?? []) {
+                all.append(change)
+            }
+            if let seq = (body["seq"] as? NSNumber)?.doubleValue { setSeq(seq) }
+            hasMore = (body["hasMore"] as? Bool) ?? false
         }
-        setSeq(cursor)
         return all
     }
 
-    // MARK: - Opt-in audio blobs
+    // MARK: - Opt-in audio blobs ("Make available everywhere")
 
     public func uploadBlob(assetID: String, data: Data, contentType: String) async throws {
         guard isEnabled else { throw SyncError.notEnabled }
-        let (response, status, _) = try await client.send(request("/v1/assets/\(assetID)/blob", method: "PUT", rawBody: data, contentType: contentType))
-        guard (200..<300).contains(status) else { throw SyncError.server(status, errorMessage(from: response)) }
+        let (body, status, _) = try await client.send(
+            request("/v1/blob/\(assetID)", method: "PUT", rawBody: data, contentType: contentType)
+        )
+        guard status == 200 else { throw SyncError.server(status, errorMessage(from: body)) }
+    }
+
+    public func downloadBlob(assetID: String) async throws -> Data {
+        guard isEnabled else { throw SyncError.notEnabled }
+        let (data, status, _) = try await client.send(request("/v1/blob/\(assetID)", method: "GET"))
+        guard status == 200 else { throw SyncError.server(status, errorMessage(from: data)) }
+        return data
     }
 }
