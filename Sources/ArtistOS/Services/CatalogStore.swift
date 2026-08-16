@@ -48,24 +48,56 @@ final class CatalogStore {
                 let decisionRecords = try DecisionRecord
                     .order(Column("timestamp"))
                     .fetchAll(db)
+                let compositionRecords = try MasterCompositionRecord.fetchAll(db)
+                let compositionSectionRecords = try MasterCompositionSectionRecord
+                    .order(Column("position"))
+                    .fetchAll(db)
+                let selectionRecords = try MasterSelectionRecord
+                    .order(Column("selectedAt"))
+                    .fetchAll(db)
 
                 var sectionsBySong: [UUID: [MasterSection]] = [:]
                 for record in sectionRecords {
                     sectionsBySong[record.songID, default: []].append(record.toDomain())
                 }
 
+                var selectionsBySection: [UUID: [MasterSelection]] = [:]
+                for record in selectionRecords {
+                    guard let selection = record.toDomain() else { continue }
+                    selectionsBySection[record.sectionID, default: []].append(selection)
+                }
+
+                var compositionSectionsByComposition: [UUID: [MasterCompositionSection]] = [:]
+                for record in compositionSectionRecords {
+                    compositionSectionsByComposition[record.compositionID, default: []].append(
+                        record.toDomain(selections: selectionsBySection[record.id] ?? [])
+                    )
+                }
+
                 let songs = songRecords.map { $0.toDomain(sections: sectionsBySong[$0.id] ?? []) }
+                let masterCompositions = compositionRecords.map {
+                    $0.toDomain(sections: compositionSectionsByComposition[$0.id] ?? [])
+                }
+
                 return ArtistCatalog(
                     artistName: artistName,
                     songs: songs,
                     assets: assetRecords.map { $0.toDomain() },
                     events: eventRecords.map { $0.toDomain() },
-                    decisions: decisionRecords.map { $0.toDomain() }
+                    decisions: decisionRecords.map { $0.toDomain() },
+                    masterCompositions: masterCompositions
                 )
             }
         } catch {
             logger.error("Failed to load catalog: \(error.localizedDescription)")
-            return ArtistCatalog(artistName: artistName, songs: [], assets: [], events: [], decisions: [])
+            return ArtistCatalog(
+                artistName: artistName,
+                songs: [],
+                assets: [],
+                events: [],
+                decisions: [],
+                masterCompositions: []
+            )
         }
     }
 
@@ -77,6 +109,30 @@ final class CatalogStore {
             try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
             for (index, section) in song.sections.enumerated() {
                 try SectionRecord(section, songID: song.id, position: index).save(db)
+            }
+        }
+    }
+
+    /// Persists the canonical composition as one atomic replacement. Existing
+    /// legacy Song.sections are deliberately untouched during migration.
+    func upsert(masterComposition: MasterComposition) throws {
+        try database.dbQueue.write { db in
+            // songID is unique; deleting first also safely handles a future
+            // persisted composition ID that differs from the legacy song ID.
+            try MasterCompositionRecord
+                .filter(Column("songID") == masterComposition.songID)
+                .deleteAll(db)
+            try MasterCompositionRecord(masterComposition).save(db)
+
+            for (position, section) in masterComposition.sections.enumerated() {
+                try MasterCompositionSectionRecord(
+                    section,
+                    compositionID: masterComposition.id,
+                    position: position
+                ).save(db)
+                for selection in section.selections {
+                    try MasterSelectionRecord(selection, sectionID: section.id).save(db)
+                }
             }
         }
     }
@@ -145,6 +201,19 @@ final class CatalogStore {
                 }
                 for decision in catalog.decisions {
                     try DecisionRecord(decision).save(db)
+                }
+                for composition in catalog.masterCompositions {
+                    try MasterCompositionRecord(composition).save(db)
+                    for (position, section) in composition.sections.enumerated() {
+                        try MasterCompositionSectionRecord(
+                            section,
+                            compositionID: composition.id,
+                            position: position
+                        ).save(db)
+                        for selection in section.selections {
+                            try MasterSelectionRecord(selection, sectionID: section.id).save(db)
+                        }
+                    }
                 }
             }
         } catch {
