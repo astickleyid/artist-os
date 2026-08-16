@@ -53,6 +53,26 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(count, 1, "enableSync should be idempotent once credentials exist")
     }
 
+    func testLaunchStateSnapshotDoesNotChangeAfterManualEnable() async throws {
+        let defaults = freshDefaults()
+        let fake = FakeHTTPClient(script: [.init(json: ["accountId": "acc1", "token": "tok1"], status: 201)])
+        let service = SyncService(client: fake, defaults: defaults)
+
+        XCTAssertFalse(service.wasEnabledAtInitialization)
+        _ = try await service.enableSync()
+        XCTAssertTrue(await service.isEnabled)
+        XCTAssertFalse(
+            service.wasEnabledAtInitialization,
+            "manual enable must not retroactively look like credentials existed at launch"
+        )
+
+        let relaunched = SyncService(client: FakeHTTPClient(script: []), defaults: defaults)
+        XCTAssertTrue(
+            relaunched.wasEnabledAtInitialization,
+            "a new service should recognize credentials persisted by the previous session"
+        )
+    }
+
     func testEnableSyncSurfacesServerError() async throws {
         let fake = FakeHTTPClient(script: [.init(json: ["error": "boom"], status: 500)])
         let service = SyncService(client: fake, defaults: freshDefaults())
