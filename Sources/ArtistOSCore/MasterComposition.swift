@@ -42,13 +42,13 @@ public struct MasterComposition: Identifiable, Codable, Equatable {
 
 /// One structural region of the current song blueprint.
 ///
-/// `selections` deliberately separates independent creative dimensions. The
-/// same recording can remain selected while only its processing snapshot changes.
+/// Selections deliberately separate independent creative dimensions. The same
+/// recording can remain selected while only its processing snapshot changes.
 public struct MasterCompositionSection: Identifiable, Codable, Equatable {
     public var id: UUID
     public var name: String
     public var role: String
-    public var selections: [MasterSelection]
+    public private(set) var selections: [MasterSelection]
     public var state: SectionState
     public var confidence: Double
     public var note: String
@@ -65,24 +65,35 @@ public struct MasterCompositionSection: Identifiable, Codable, Equatable {
         self.id = id
         self.name = name
         self.role = role
-        self.selections = selections
+        self.selections = Self.normalized(selections)
         self.state = state
         self.confidence = confidence
         self.note = note
     }
 
     public func selection(_ kind: MasterSelectionKind) -> MasterSelection? {
-        selections.last { $0.kind == kind }
+        selections.first { $0.kind == kind }
     }
 
-    public mutating func setSelection(_ selection: MasterSelection?) {
-        guard let selection else { return }
+    /// Replaces the current binding for this creative dimension. Nil is not a
+    /// valid setter value; callers must explicitly clear a dimension instead.
+    public mutating func setSelection(_ selection: MasterSelection) {
         selections.removeAll { $0.kind == selection.kind }
         selections.append(selection)
     }
 
     public mutating func clearSelection(_ kind: MasterSelectionKind) {
         selections.removeAll { $0.kind == kind }
+    }
+
+    private static func normalized(_ incoming: [MasterSelection]) -> [MasterSelection] {
+        var byKind: [MasterSelectionKind: MasterSelection] = [:]
+        var order: [MasterSelectionKind] = []
+        for selection in incoming {
+            if byKind[selection.kind] == nil { order.append(selection.kind) }
+            byKind[selection.kind] = selection
+        }
+        return order.compactMap { byKind[$0] }
     }
 }
 
@@ -133,8 +144,11 @@ public extension MasterComposition {
     /// Projects the legacy Song.sections representation into the canonical model.
     /// This lets existing libraries and UI continue to work while persistence and
     /// editing migrate incrementally instead of forcing a destructive rewrite.
+    /// Until a persisted composition identity exists, the Song ID is deliberately
+    /// reused so repeated projections remain stable for SwiftUI and caches.
     static func projected(from song: Song) -> MasterComposition {
         MasterComposition(
+            id: song.id,
             songID: song.id,
             sections: song.sections.map { legacy in
                 var selections: [MasterSelection] = []
