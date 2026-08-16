@@ -62,4 +62,49 @@ final class CatalogMasterCompositionTests: XCTestCase {
 
         XCTAssertEqual(catalog.masterComposition(for: song.id)?.id, persisted.id)
     }
+
+    func testCatalogNormalizesDuplicateCanonicalTruthToNewestComposition() {
+        let songID = UUID()
+        let older = MasterComposition(
+            id: UUID(),
+            songID: songID,
+            sections: [],
+            updatedAt: Date(timeIntervalSince1970: 10)
+        )
+        let newer = MasterComposition(
+            id: UUID(),
+            songID: songID,
+            sections: [],
+            updatedAt: Date(timeIntervalSince1970: 20)
+        )
+
+        let catalog = ArtistCatalog(
+            artistName: "T",
+            songs: [],
+            assets: [],
+            events: [],
+            masterCompositions: [newer, older]
+        )
+
+        XCTAssertEqual(catalog.masterCompositions.count, 1)
+        XCTAssertEqual(catalog.masterCompositions[0].id, newer.id)
+    }
+
+    func testSetMasterCompositionReplacesExistingTruthForSong() {
+        let songID = UUID()
+        let first = MasterComposition(id: UUID(), songID: songID, sections: [])
+        let second = MasterComposition(id: UUID(), songID: songID, sections: [])
+        var catalog = ArtistCatalog(
+            artistName: "T",
+            songs: [],
+            assets: [],
+            events: [],
+            masterCompositions: [first]
+        )
+
+        catalog.setMasterComposition(second)
+
+        XCTAssertEqual(catalog.masterCompositions.count, 1)
+        XCTAssertEqual(catalog.masterComposition(for: songID)?.id, second.id)
+    }
 }
