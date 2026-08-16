@@ -267,3 +267,93 @@ struct DecisionRecord: Codable, FetchableRecord, PersistableRecord {
         value.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
     }
 }
+
+struct MasterCompositionRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "masterComposition"
+    var id: UUID
+    var songID: UUID
+    var outputAssetID: UUID?
+    var updatedAt: Date
+
+    init(_ composition: MasterComposition) {
+        id = composition.id
+        songID = composition.songID
+        outputAssetID = composition.outputAssetID
+        updatedAt = composition.updatedAt
+    }
+
+    func toDomain(sections: [MasterCompositionSection]) -> MasterComposition {
+        MasterComposition(
+            id: id,
+            songID: songID,
+            sections: sections,
+            outputAssetID: outputAssetID,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+struct MasterCompositionSectionRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "masterCompositionSection"
+    var id: UUID
+    var compositionID: UUID
+    var position: Int
+    var name: String
+    var role: String
+    var state: String
+    var confidence: Double
+    var note: String
+
+    init(_ section: MasterCompositionSection, compositionID: UUID, position: Int) {
+        id = section.id
+        self.compositionID = compositionID
+        self.position = position
+        name = section.name
+        role = section.role
+        state = section.state.rawValue
+        confidence = section.confidence
+        note = section.note
+    }
+
+    func toDomain(selections: [MasterSelection]) -> MasterCompositionSection {
+        MasterCompositionSection(
+            id: id,
+            name: name,
+            role: role,
+            selections: selections,
+            state: SectionState(rawValue: state) ?? .open,
+            confidence: confidence,
+            note: note
+        )
+    }
+}
+
+struct MasterSelectionRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "masterSelection"
+    var id: UUID
+    var sectionID: UUID
+    var kind: String
+    var referenceID: UUID
+    var decisionID: UUID?
+    var selectedAt: Date
+
+    init(_ selection: MasterSelection, sectionID: UUID) {
+        id = selection.id
+        self.sectionID = sectionID
+        kind = selection.kind.rawValue
+        referenceID = selection.referenceID
+        decisionID = selection.decisionID
+        selectedAt = selection.selectedAt
+    }
+
+    func toDomain() -> MasterSelection? {
+        guard let kind = MasterSelectionKind(rawValue: kind) else { return nil }
+        return MasterSelection(
+            id: id,
+            kind: kind,
+            referenceID: referenceID,
+            decisionID: decisionID,
+            selectedAt: selectedAt
+        )
+    }
+}
