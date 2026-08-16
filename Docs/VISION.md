@@ -24,7 +24,7 @@ Versions are derived views over assets + creative history. They are not primary 
    (escalate-only, fires once). D2: a stack of ≥2 **full-mix** versions
    requires a pinned master; a newer version than the pinned master reopens
    the question. Surfaced as a Decide inbox; resolved by A/B. ✅ web ✅ macOS
-3. **Audio intelligence** — BPM/key detection feeding stacks and later DNA. ✅ macOS; web parity remains implementation-specific
+3. **Audio intelligence** — BPM/key detection feeding stacks and later DNA. ✅ web ✅ macOS
 4. **Master Composition migration** — move from the legacy one-asset-per-section shape to layered source / processing / automation / comp selections without breaking existing catalogs. 🚧
 5. **Decision history integration** — first-class decisions persisted, synced, and surfaced in approval flows so events remain factual and intent remains separate. 🚧
 6. **Creative DNA** — cross-song patterns once enough trustworthy history accumulates. ⏳
