@@ -53,7 +53,7 @@ final class CatalogStore {
                     .order(Column("position"))
                     .fetchAll(db)
                 let selectionRecords = try MasterSelectionRecord
-                    .order(Column("selectedAt"))
+                    .order(Column("selectedAt"), Column("kind"), Column("id"))
                     .fetchAll(db)
 
                 var sectionsBySong: [UUID: [MasterSection]] = [:]
