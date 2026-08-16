@@ -11,7 +11,7 @@ public struct ArtistCatalog: Codable, Equatable {
     public var assets: [Asset]
     public var events: [CreativeEvent]
     public var decisions: [CreativeDecision]
-    public var masterCompositions: [MasterComposition]
+    public private(set) var masterCompositions: [MasterComposition]
 
     public init(
         artistName: String,
@@ -26,7 +26,7 @@ public struct ArtistCatalog: Codable, Equatable {
         self.assets = assets
         self.events = events
         self.decisions = decisions
-        self.masterCompositions = masterCompositions
+        self.masterCompositions = Self.normalizedMasterCompositions(masterCompositions)
     }
 
     // Backward compatible with catalogs written before Decisions and Master
@@ -43,7 +43,11 @@ public struct ArtistCatalog: Codable, Equatable {
         assets = try container.decode([Asset].self, forKey: .assets)
         events = try container.decode([CreativeEvent].self, forKey: .events)
         decisions = try container.decodeIfPresent([CreativeDecision].self, forKey: .decisions) ?? []
-        masterCompositions = try container.decodeIfPresent([MasterComposition].self, forKey: .masterCompositions) ?? []
+        let decodedCompositions = try container.decodeIfPresent(
+            [MasterComposition].self,
+            forKey: .masterCompositions
+        ) ?? []
+        masterCompositions = Self.normalizedMasterCompositions(decodedCompositions)
     }
 
     /// Returns the persisted canonical composition when available. Existing
@@ -55,6 +59,36 @@ public struct ArtistCatalog: Codable, Equatable {
         }
         guard let song = songs.first(where: { $0.id == songID }) else { return nil }
         return MasterComposition.projected(from: song)
+    }
+
+    /// Replaces the canonical composition for its Song. This mirrors the unique
+    /// songID constraint in SQLite so in-memory truth cannot diverge from disk.
+    public mutating func setMasterComposition(_ composition: MasterComposition) {
+        masterCompositions.removeAll { $0.songID == composition.songID }
+        masterCompositions.append(composition)
+    }
+
+    public mutating func removeMasterComposition(for songID: UUID) {
+        masterCompositions.removeAll { $0.songID == songID }
+    }
+
+    private static func normalizedMasterCompositions(
+        _ compositions: [MasterComposition]
+    ) -> [MasterComposition] {
+        var bySong: [UUID: MasterComposition] = [:]
+        var order: [UUID] = []
+        for composition in compositions {
+            if bySong[composition.songID] == nil {
+                order.append(composition.songID)
+                bySong[composition.songID] = composition
+                continue
+            }
+            if let existing = bySong[composition.songID],
+               composition.updatedAt >= existing.updatedAt {
+                bySong[composition.songID] = composition
+            }
+        }
+        return order.compactMap { bySong[$0] }
     }
 }
 
