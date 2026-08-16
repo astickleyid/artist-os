@@ -1,21 +1,32 @@
 /* Artist OS — Cloudflare sync client.
-   Contract: metadata-first (songs/assets/events), audio opt-in per asset
-   via "Make available everywhere". See Docs/VISION.md + worker/src/index.js.
-   Pure helpers (exported as AOSSync for Node testing) are separated from
-   the network/IndexedDB-touching runtime below. */
+   Contract: metadata-first canonical creative state + selective audio blobs.
+   See Docs/VISION.md + worker/src/index.js. Pure helpers (exported as AOSSync
+   for Node testing) are separated from the network/IndexedDB runtime below. */
 (function (g) {
   "use strict";
 
   /* ---------- pure: entity <-> wire encoding ---------- */
 
-  // Only fields that matter for cross-device state; excludes local-only
-  // runtime fields (blob handles, decoded peaks, etc).
+  // Only fields that matter for cross-device state; excludes local-only runtime
+  // fields (blob handles, decoded peaks, bookmarks, etc).
   const SONG_FIELDS = ["id", "title", "era", "status", "progress", "qualityScore",
     "risk", "sections", "masterAssetId", "created", "updatedAt"];
   const ASSET_FIELDS = ["id", "songId", "title", "file", "role", "created", "updatedAt",
     "type", "modifiedAt", "sourcePath", "version", "vOrder", "dur", "hash", "size",
     "bpm", "keyName", "analysisConf", "analyzedAt", "cloudKey"];
-  const EVENT_FIELDS = ["id", "songId", "target", "op", "summary", "t", "observed", "confidence"];
+  const EVENT_FIELDS = ["id", "songId", "target", "op", "beforeAssetId", "afterAssetId",
+    "summary", "t", "observed", "confidence"];
+  const DECISION_FIELDS = ["id", "songId", "target", "action", "selectedAssetId",
+    "rejectedAssetIds", "relatedEventIds", "reason", "source", "updatedAt"];
+  const MASTER_COMPOSITION_FIELDS = ["id", "songId", "sections", "outputAssetId", "updatedAt"];
+
+  const FIELDS_BY_KIND = {
+    song: SONG_FIELDS,
+    asset: ASSET_FIELDS,
+    event: EVENT_FIELDS,
+    decision: DECISION_FIELDS,
+    masterComposition: MASTER_COMPOSITION_FIELDS
+  };
 
   function pick(obj, fields) {
     const out = {};
@@ -26,7 +37,8 @@
   function toChange(kind, entity, deleted) {
     const updatedAt = entity.updatedAt || entity.created || entity.t || 0;
     if (deleted) return { kind, id: entity.id, updatedAt: Date.now(), deleted: true };
-    const fields = kind === "song" ? SONG_FIELDS : kind === "asset" ? ASSET_FIELDS : EVENT_FIELDS;
+    const fields = FIELDS_BY_KIND[kind];
+    if (!fields) throw new Error("Unsupported sync kind: " + kind);
     return { kind, id: entity.id, updatedAt, data: pick(entity, fields) };
   }
 
@@ -47,9 +59,6 @@
     return copy;
   }
 
-  /* Dirty-set bookkeeping: which (kind,id) pairs need pushing. Plain data
-     structure so it's trivially testable; the runtime below wires it to
-     actual mutations via a Proxy-free "markDirty" call at write sites. */
   function makeDirtyTracker() {
     const set = new Map(); // "kind:id" -> {kind, id, deleted}
     return {
@@ -60,7 +69,7 @@
   }
 
   g.AOSSync = {
-    SONG_FIELDS, ASSET_FIELDS, EVENT_FIELDS,
-    toChange, applyRemoteChange, makeDirtyTracker, pick
+    SONG_FIELDS, ASSET_FIELDS, EVENT_FIELDS, DECISION_FIELDS, MASTER_COMPOSITION_FIELDS,
+    FIELDS_BY_KIND, toChange, applyRemoteChange, makeDirtyTracker, pick
   };
 })(typeof window !== "undefined" ? window : globalThis);
