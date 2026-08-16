@@ -105,11 +105,7 @@ final class CatalogStore {
 
     func upsert(song: Song) throws {
         try database.dbQueue.write { db in
-            try SongRecord(song).save(db)
-            try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
-            for (index, section) in song.sections.enumerated() {
-                try SectionRecord(section, songID: song.id, position: index).save(db)
-            }
+            try saveSong(song, in: db)
         }
     }
 
@@ -121,13 +117,31 @@ final class CatalogStore {
         }
     }
 
-    /// A decision and the canonical state it authorizes are one unit of truth.
-    /// If either write fails, GRDB rolls the transaction back so a Decision can
-    /// never claim a source is current while the Master Composition says otherwise.
-    func commit(decision: CreativeDecision, masterComposition: MasterComposition) throws {
+    /// One explicit artist approval changes four views of the same truth:
+    /// legacy Song state (during migration), factual Events, the Decision that
+    /// explains intent, and canonical Master Composition. They either all land
+    /// in SQLite or none of them do.
+    func commitApproval(
+        song: Song,
+        events: [CreativeEvent],
+        decision: CreativeDecision,
+        masterComposition: MasterComposition
+    ) throws {
         try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            for event in events {
+                try EventRecord(event).save(db)
+            }
             try DecisionRecord(decision).save(db)
             try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
+
+    private func saveSong(_ song: Song, in db: Database) throws {
+        try SongRecord(song).save(db)
+        try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
+        for (index, section) in song.sections.enumerated() {
+            try SectionRecord(section, songID: song.id, position: index).save(db)
         }
     }
 
@@ -202,10 +216,7 @@ final class CatalogStore {
         do {
             try database.dbQueue.write { db in
                 for song in catalog.songs {
-                    try SongRecord(song).save(db)
-                    for (index, section) in song.sections.enumerated() {
-                        try SectionRecord(section, songID: song.id, position: index).save(db)
-                    }
+                    try saveSong(song, in: db)
                 }
                 for asset in catalog.assets {
                     try AssetRecord(asset).save(db)
