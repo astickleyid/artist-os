@@ -1,7 +1,7 @@
 /* Artist OS Sync Worker — metadata-first sync + selective audio blobs.
    Zero dependencies. Tokens stored SHA-256 hashed. Device-link pairing. */
 
-const KINDS = new Set(["song", "asset", "event"]);
+const KINDS = new Set(["song", "asset", "event", "decision", "masterComposition"]);
 const MAX_BATCH = 500;
 const MAX_DATA_BYTES = 200_000;
 const MAX_BLOB_BYTES = 150 * 1024 * 1024;
@@ -29,7 +29,7 @@ function randomToken(bytes = 32) {
 
 function randomCode(length = 6) {
   const raw = crypto.getRandomValues(new Uint8Array(length));
-  return [...raw].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+  return [...raw].map(b => CODE_ALPHABET[b % CODE_ALPHABET.length]].join("");
 }
 
 function corsHeaders(env, origin) {
