@@ -8,6 +8,14 @@ struct MasterCompositionView: View {
     @State private var isAddingSlot = false
     @State private var newSlotName = ""
 
+    private var composition: MasterComposition? {
+        state.catalog.masterComposition(for: song.id)
+    }
+
+    private var hasPersistedComposition: Bool {
+        state.catalog.masterCompositions.contains { $0.songID == song.id }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -15,6 +23,11 @@ struct MasterCompositionView: View {
                     .font(.caption.weight(.black))
                     .foregroundStyle(AOSTheme.muted)
                     .textCase(.uppercase)
+
+                if hasPersistedComposition {
+                    AOSBadge(text: "Canonical", tint: AOSTheme.gold)
+                }
+
                 Spacer()
                 Button {
                     newSlotName = ""
@@ -27,8 +40,13 @@ struct MasterCompositionView: View {
             }
 
             ForEach(Array(song.sections.enumerated()), id: \.element.id) { index, section in
-                MasterSectionRow(index: index + 1, song: song, section: section)
-                    .aosHoverable(cornerRadius: 17)
+                MasterSectionRow(
+                    index: index + 1,
+                    song: song,
+                    section: section,
+                    canonicalSection: composition?.sections.first(where: { $0.id == section.id })
+                )
+                .aosHoverable(cornerRadius: 17)
             }
             .animation(.snappy(duration: 0.25), value: song.sections.map(\.id))
 
@@ -53,13 +71,25 @@ struct MasterSectionRow: View {
     let index: Int
     let song: Song
     let section: MasterSection
+    let canonicalSection: MasterCompositionSection?
 
     @State private var isEditingNote = false
     @State private var noteDraft = ""
     @State private var isDropTargeted = false
     @State private var isComparing = false
 
-    private var asset: Asset? { state.asset(id: section.assetID) }
+    private var sourceAssetID: UUID? {
+        canonicalSection?.selection(.sourceAsset)?.referenceID ?? section.assetID
+    }
+
+    private var asset: Asset? { state.asset(id: sourceAssetID) }
+
+    private var additionalCanonicalLayers: [MasterSelectionKind] {
+        guard let canonicalSection else { return [] }
+        return [.processingSnapshot, .automationSnapshot, .compRecipe].filter {
+            canonicalSection.selection($0) != nil
+        }
+    }
 
     private var tint: Color {
         switch section.state {
@@ -95,6 +125,19 @@ struct MasterSectionRow: View {
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
                     .lineLimit(1)
+
+                if !additionalCanonicalLayers.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(additionalCanonicalLayers, id: \.rawValue) { kind in
+                            Text(kind.rawValue.replacingOccurrences(of: " Snapshot", with: ""))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(AOSTheme.muted)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.045), in: Capsule())
+                        }
+                    }
+                }
             }
 
             Spacer()
@@ -126,11 +169,11 @@ struct MasterSectionRow: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            state.selectedAssetID = section.assetID
+            state.selectedAssetID = sourceAssetID
         }
         .dropDestination(for: String.self) { items, _ in
             guard let raw = items.first, let assetID = UUID(uuidString: raw) else { return false }
-            state.assign(assetID: assetID, sectionID: section.id, songID: song.id)
+            state.approveSectionDecision(sectionID: section.id, songID: song.id, winner: assetID)
             return true
         } isTargeted: { targeted in
             isDropTargeted = targeted
@@ -147,12 +190,16 @@ struct MasterSectionRow: View {
         Menu {
             Menu("Assign Asset") {
                 Button("None") {
-                    state.assign(assetID: nil, sectionID: section.id, songID: song.id)
+                    state.clearCanonicalSectionSource(sectionID: section.id, songID: song.id)
                 }
                 Divider()
                 ForEach(state.assets(for: song.id)) { candidate in
                     Button(candidate.title) {
-                        state.assign(assetID: candidate.id, sectionID: section.id, songID: song.id)
+                        state.approveSectionDecision(
+                            sectionID: section.id,
+                            songID: song.id,
+                            winner: candidate.id
+                        )
                     }
                 }
             }
