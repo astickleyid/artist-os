@@ -36,6 +36,8 @@ final class CompanionStore: ObservableObject {
     private(set) var catalogSongs: [Song] = []
     private(set) var catalogAssets: [Asset] = []
     private(set) var catalogEvents: [CreativeEvent] = []
+    private(set) var catalogDecisions: [CreativeDecision] = []
+    private(set) var catalogMasterCompositions: [MasterComposition] = []
 
     // MARK: lifecycle
 
@@ -74,58 +76,23 @@ final class CompanionStore: ObservableObject {
         }
     }
 
-    // MARK: pull application (mirrors AppState.pullFromCloud exactly)
+    // MARK: pull application
 
     private func apply(changes: [SyncLogic.JSONDict]) {
-        for change in changes {
-            guard let kindRaw = change["kind"] as? String, let kind = SyncLogic.Kind(rawValue: kindRaw),
-                  let idString = change["id"] as? String,
-                  let updatedAtMs = (change["updatedAt"] as? NSNumber)?.doubleValue
-            else { continue }
-            let deleted = (change["deleted"] as? Bool) ?? false
-            let remoteDate = SyncLogic.date(fromMs: updatedAtMs)
-
-            switch kind {
-            case .song:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                let idx = catalogSongs.firstIndex(where: { $0.id == uuid })
-                if deleted { if let idx { catalogSongs.remove(at: idx) }; continue }
-                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
-                    overLocal: idx.map { catalogSongs[$0].updatedAt } ?? .distantPast) else { continue }
-                guard let payload = change["data"] as? SyncLogic.JSONDict,
-                      let merged = SyncLogic.mergedSong(payload: payload, updatedAt: remoteDate,
-                        existing: idx.map { catalogSongs[$0] })
-                else { continue }
-                if let idx { catalogSongs[idx] = merged } else { catalogSongs.append(merged) }
-
-            case .asset:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                let idx = catalogAssets.firstIndex(where: { $0.id == uuid })
-                if deleted { if let idx { catalogAssets.remove(at: idx) }; continue }
-                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
-                    overLocal: idx.map { catalogAssets[$0].updatedAt } ?? .distantPast) else { continue }
-                guard let payload = change["data"] as? SyncLogic.JSONDict,
-                      let merged = SyncLogic.mergedAsset(payload: payload, updatedAt: remoteDate,
-                        existing: idx.map { catalogAssets[$0] })
-                else { continue }
-                if let idx { catalogAssets[idx] = merged } else { catalogAssets.append(merged) }
-
-            case .event:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                if deleted { catalogEvents.removeAll { $0.id == uuid }; continue }
-                guard !catalogEvents.contains(where: { $0.id == uuid }),
-                      let payload = change["data"] as? SyncLogic.JSONDict,
-                      let songIdString = payload["songId"] as? String, let songID = UUID(uuidString: songIdString),
-                      let targetRaw = payload["target"] as? String, let target = EventTarget(rawValue: targetRaw),
-                      let opRaw = payload["op"] as? String, let operation = EventOperation(rawValue: opRaw),
-                      let summary = payload["summary"] as? String
-                else { continue }
-                let confidence = (payload["confidence"] as? NSNumber)?.doubleValue ?? 1.0
-                catalogEvents.append(CreativeEvent(id: uuid, songID: songID, timestamp: remoteDate,
-                    target: target, operation: operation, beforeAssetID: nil, afterAssetID: nil,
-                    summary: summary, confidence: confidence))
-            }
-        }
+        var catalog = ArtistCatalog(
+            artistName: "STICK",
+            songs: catalogSongs,
+            assets: catalogAssets,
+            events: catalogEvents,
+            decisions: catalogDecisions,
+            masterCompositions: catalogMasterCompositions
+        )
+        CanonicalSync.apply(changes: changes, to: &catalog)
+        catalogSongs = catalog.songs
+        catalogAssets = catalog.assets
+        catalogEvents = catalog.events
+        catalogDecisions = catalog.decisions
+        catalogMasterCompositions = catalog.masterCompositions
     }
 
     // MARK: display derivation (shared decision engine, triage ordering)
@@ -159,7 +126,10 @@ final class CompanionStore: ObservableObject {
             let stack = VersionIntelligence.versionStack(assets)
             let lastEvent = catalogEvents.filter { $0.songID == song.id }.map(\.timestamp).max()
             let lastAsset = assets.map(\.updatedAt).max()
-            let master = song.masterAssetID.flatMap { mid in assets.first(where: { $0.id == mid }) }
+            let canonicalOutput = catalogMasterCompositions
+                .first(where: { $0.songID == song.id })?.outputAssetID
+            let masterID = canonicalOutput ?? song.masterAssetID
+            let master = masterID.flatMap { mid in assets.first(where: { $0.id == mid }) }
             let anyAnalyzed = master ?? assets.first(where: { $0.bpm != nil })
             return MobileSong(
                 id: song.id.uuidString, title: song.title, status: song.status.rawValue,
@@ -177,7 +147,44 @@ final class CompanionStore: ObservableObject {
 
     // MARK: offline cache (open instantly, refresh in background)
 
-    private struct Snapshot: Codable { var songs: [Song]; var assets: [Asset]; var events: [CreativeEvent] }
+    private struct Snapshot: Codable {
+        var songs: [Song]
+        var assets: [Asset]
+        var events: [CreativeEvent]
+        var decisions: [CreativeDecision]
+        var masterCompositions: [MasterComposition]
+
+        init(
+            songs: [Song],
+            assets: [Asset],
+            events: [CreativeEvent],
+            decisions: [CreativeDecision] = [],
+            masterCompositions: [MasterComposition] = []
+        ) {
+            self.songs = songs
+            self.assets = assets
+            self.events = events
+            self.decisions = decisions
+            self.masterCompositions = masterCompositions
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case songs, assets, events, decisions, masterCompositions
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            songs = try container.decode([Song].self, forKey: .songs)
+            assets = try container.decode([Asset].self, forKey: .assets)
+            events = try container.decode([CreativeEvent].self, forKey: .events)
+            decisions = try container.decodeIfPresent([CreativeDecision].self, forKey: .decisions) ?? []
+            masterCompositions = try container.decodeIfPresent(
+                [MasterComposition].self,
+                forKey: .masterCompositions
+            ) ?? []
+        }
+    }
+
     private var cacheURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("ArtistOS", isDirectory: true)
@@ -185,13 +192,23 @@ final class CompanionStore: ObservableObject {
         return dir.appendingPathComponent("catalog-cache.json")
     }
     private func saveCache() {
-        let snap = Snapshot(songs: catalogSongs, assets: catalogAssets, events: catalogEvents)
+        let snap = Snapshot(
+            songs: catalogSongs,
+            assets: catalogAssets,
+            events: catalogEvents,
+            decisions: catalogDecisions,
+            masterCompositions: catalogMasterCompositions
+        )
         if let data = try? JSONEncoder().encode(snap) { try? data.write(to: cacheURL, options: .atomic) }
     }
     private func loadCache() {
         guard let data = try? Data(contentsOf: cacheURL),
               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        catalogSongs = snap.songs; catalogAssets = snap.assets; catalogEvents = snap.events
+        catalogSongs = snap.songs
+        catalogAssets = snap.assets
+        catalogEvents = snap.events
+        catalogDecisions = snap.decisions
+        catalogMasterCompositions = snap.masterCompositions
     }
 }
 
