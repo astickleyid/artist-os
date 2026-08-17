@@ -25,7 +25,10 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         line: UInt = #line
     ) {
         guard let actual else {
-            return XCTAssertNil(expected, file: file, line: line)
+            if expected != nil {
+                XCTFail("Expected decision to round-trip from persistence", file: file, line: line)
+            }
+            return
         }
         guard let expected else {
             return XCTFail("Expected decision to round-trip from persistence", file: file, line: line)
@@ -49,7 +52,10 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         line: UInt = #line
     ) {
         guard let actual else {
-            return XCTAssertNil(expected, file: file, line: line)
+            if expected != nil {
+                XCTFail("Expected composition to round-trip from persistence", file: file, line: line)
+            }
+            return
         }
         guard let expected else {
             return XCTFail("Expected composition to round-trip from persistence", file: file, line: line)
