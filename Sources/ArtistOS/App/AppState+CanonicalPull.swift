@@ -15,6 +15,7 @@ extension AppState {
     func applyCanonicalCloudChanges(
         _ changes: [SyncLogic.JSONDict]
     ) throws -> [CanonicalSync.AppliedChange] {
+        let previousSelectedSongID = selectedSongID
         let applied = try CanonicalSyncPersistence.apply(
             changes: changes,
             to: &catalog,
@@ -23,12 +24,17 @@ extension AppState {
 
         guard !applied.isEmpty else { return [] }
 
-        if let selectedSongID,
-           !catalog.songs.contains(where: { $0.id == selectedSongID }) {
-            self.selectedSongID = catalog.songs.first?.id
-        }
-        if let selectedAssetID,
-           !catalog.assets.contains(where: { $0.id == selectedAssetID }) {
+        let selectedSongWasRemoved = previousSelectedSongID.map { previous in
+            !catalog.songs.contains(where: { $0.id == previous })
+        } ?? false
+
+        if selectedSongWasRemoved {
+            selectedSongID = catalog.songs.first?.id
+            // Match local deleteSong semantics: changing songs because the
+            // current Song disappeared also clears any asset-level selection.
+            selectedAssetID = nil
+        } else if let selectedAssetID,
+                  !catalog.assets.contains(where: { $0.id == selectedAssetID }) {
             self.selectedAssetID = nil
         }
 
