@@ -21,7 +21,6 @@ final class CatalogStore {
         } catch {
             Logger(subsystem: "com.stickley.artistos", category: "CatalogStore")
                 .error("Falling back to in-memory database: \(error.localizedDescription)")
-            // In-memory DatabaseQueue cannot fail to open.
             return CatalogStore(database: try! AppDatabase.inMemory())
         }
     }
@@ -40,14 +39,10 @@ final class CatalogStore {
         do {
             return try database.dbQueue.read { db in
                 let songRecords = try SongRecord.fetchAll(db)
-                let sectionRecords = try SectionRecord
-                    .order(Column("position"))
-                    .fetchAll(db)
+                let sectionRecords = try SectionRecord.order(Column("position")).fetchAll(db)
                 let assetRecords = try AssetRecord.fetchAll(db)
                 let eventRecords = try EventRecord.fetchAll(db)
-                let decisionRecords = try DecisionRecord
-                    .order(Column("timestamp"))
-                    .fetchAll(db)
+                let decisionRecords = try DecisionRecord.order(Column("timestamp")).fetchAll(db)
                 let compositionRecords = try MasterCompositionRecord.fetchAll(db)
                 let compositionSectionRecords = try MasterCompositionSectionRecord
                     .order(Column("position"))
@@ -137,6 +132,56 @@ final class CatalogStore {
         }
     }
 
+    /// Persists one accepted remote canonical batch in a single GRDB transaction.
+    /// The candidate catalog is already resolved through CanonicalSync, so each
+    /// non-tombstone write copies the exact winning entity into SQLite.
+    func persistCanonicalSync(
+        _ applied: [CanonicalSync.AppliedChange],
+        catalog: ArtistCatalog
+    ) throws {
+        try database.dbQueue.write { db in
+            for change in applied {
+                switch change.kind {
+                case .song:
+                    if change.deleted {
+                        try AssetRecord.filter(Column("songID") == change.id).deleteAll(db)
+                        try SongRecord.filter(Column("id") == change.id).deleteAll(db)
+                    } else if let song = catalog.songs.first(where: { $0.id == change.id }) {
+                        try saveSong(song, in: db)
+                    }
+
+                case .asset:
+                    if change.deleted {
+                        try AssetRecord.filter(Column("id") == change.id).deleteAll(db)
+                    } else if let asset = catalog.assets.first(where: { $0.id == change.id }) {
+                        try AssetRecord(asset).save(db)
+                    }
+
+                case .event:
+                    if change.deleted {
+                        try EventRecord.filter(Column("id") == change.id).deleteAll(db)
+                    } else if let event = catalog.events.first(where: { $0.id == change.id }) {
+                        try EventRecord(event).save(db)
+                    }
+
+                case .decision:
+                    if change.deleted {
+                        try DecisionRecord.filter(Column("id") == change.id).deleteAll(db)
+                    } else if let decision = catalog.decisions.first(where: { $0.id == change.id }) {
+                        try DecisionRecord(decision).save(db)
+                    }
+
+                case .masterComposition:
+                    if change.deleted {
+                        try MasterCompositionRecord.filter(Column("id") == change.id).deleteAll(db)
+                    } else if let composition = catalog.masterCompositions.first(where: { $0.id == change.id }) {
+                        try replaceMasterComposition(composition, in: db)
+                    }
+                }
+            }
+        }
+    }
+
     private func saveSong(_ song: Song, in db: Database) throws {
         try SongRecord(song).save(db)
         try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
@@ -146,8 +191,6 @@ final class CatalogStore {
     }
 
     private func replaceMasterComposition(_ masterComposition: MasterComposition, in db: Database) throws {
-        // songID is unique; deleting first also safely handles a future
-        // persisted composition ID that differs from the legacy song ID.
         try MasterCompositionRecord
             .filter(Column("songID") == masterComposition.songID)
             .deleteAll(db)
@@ -192,9 +235,6 @@ final class CatalogStore {
 
     // MARK: - Canonical sync deletion primitives
 
-    /// Remote tombstones must remove the same local persisted truth that was
-    /// removed from the in-memory catalog. These are intentionally narrow;
-    /// song deletion remains the ownership-level cascade above.
     func delete(assetID: UUID) throws {
         _ = try database.dbQueue.write { db in
             try AssetRecord.filter(Column("id") == assetID).deleteAll(db)
@@ -229,7 +269,6 @@ final class CatalogStore {
 
     func save(watchedFolder: WatchedFolder) throws {
         try database.dbQueue.write { db in
-            // Unique on path: replace an existing entry for the same folder.
             try WatchedFolderRecord.filter(Column("path") == watchedFolder.path).deleteAll(db)
             try WatchedFolderRecord(watchedFolder).save(db)
         }
