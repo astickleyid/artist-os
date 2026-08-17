@@ -114,7 +114,12 @@ extension AppState {
         catalog.events.append(contentsOf: events)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
-        syncCurrentlySupportedApprovalState(song: updatedSong, events: events)
+        syncCanonicalApprovalState(
+            song: updatedSong,
+            events: events,
+            decision: decision,
+            composition: composition
+        )
     }
 
     /// Commits an artist's chosen current full-song master. The canonical
@@ -188,16 +193,31 @@ extension AppState {
         catalog.events.append(event)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
-        syncCurrentlySupportedApprovalState(song: updatedSong, events: [event])
+        syncCanonicalApprovalState(
+            song: updatedSong,
+            events: [event],
+            decision: decision,
+            composition: composition
+        )
     }
 
-    /// Until migration step 5 adds Decision and Master Composition to the wire
-    /// contract, preserve the existing cloud-visible Song/Event behavior for
-    /// approvals. A failed push is surfaced instead of pretending cloud state
-    /// is current. Canonical objects remain safely persisted locally.
-    private func syncCurrentlySupportedApprovalState(song: Song, events: [CreativeEvent]) {
+    /// Approval state is one canonical unit across devices: compatibility Song,
+    /// factual Events, the artist Decision, and the resulting Master Composition.
+    /// Push all four together so a remote device never receives WHAT without WHY
+    /// or a Decision without the canonical state it authorized.
+    private func syncCanonicalApprovalState(
+        song: Song,
+        events: [CreativeEvent],
+        decision: CreativeDecision,
+        composition: MasterComposition
+    ) {
         guard syncStatus == .on else { return }
-        let changes = [SyncLogic.change(forSong: song)] + events.map(SyncLogic.change(forEvent:))
+        let changes = [SyncLogic.change(forSong: song)]
+            + events.map(SyncLogic.change(forEvent:))
+            + [
+                SyncLogic.change(forDecision: decision),
+                SyncLogic.change(forMasterComposition: composition)
+            ]
         Task { [weak self] in
             guard let self else { return }
             do {
