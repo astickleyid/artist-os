@@ -3,6 +3,82 @@ import ArtistOSCore
 @testable import ArtistOS
 
 final class CanonicalSyncPersistenceTests: XCTestCase {
+    private func assertDateEqual(
+        _ actual: Date,
+        _ expected: Date,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(
+            actual.timeIntervalSince1970,
+            expected.timeIntervalSince1970,
+            accuracy: 0.001,
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertDecisionEqual(
+        _ actual: CreativeDecision?,
+        _ expected: CreativeDecision?,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let actual else {
+            return XCTAssertNil(expected, file: file, line: line)
+        }
+        guard let expected else {
+            return XCTFail("Expected decision to round-trip from persistence", file: file, line: line)
+        }
+        XCTAssertEqual(actual.id, expected.id, file: file, line: line)
+        XCTAssertEqual(actual.songID, expected.songID, file: file, line: line)
+        assertDateEqual(actual.timestamp, expected.timestamp, file: file, line: line)
+        XCTAssertEqual(actual.target, expected.target, file: file, line: line)
+        XCTAssertEqual(actual.action, expected.action, file: file, line: line)
+        XCTAssertEqual(actual.selectedAssetID, expected.selectedAssetID, file: file, line: line)
+        XCTAssertEqual(actual.rejectedAssetIDs, expected.rejectedAssetIDs, file: file, line: line)
+        XCTAssertEqual(actual.relatedEventIDs, expected.relatedEventIDs, file: file, line: line)
+        XCTAssertEqual(actual.reason, expected.reason, file: file, line: line)
+        XCTAssertEqual(actual.source, expected.source, file: file, line: line)
+    }
+
+    private func assertMasterCompositionEqual(
+        _ actual: MasterComposition?,
+        _ expected: MasterComposition?,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let actual else {
+            return XCTAssertNil(expected, file: file, line: line)
+        }
+        guard let expected else {
+            return XCTFail("Expected composition to round-trip from persistence", file: file, line: line)
+        }
+        XCTAssertEqual(actual.id, expected.id, file: file, line: line)
+        XCTAssertEqual(actual.songID, expected.songID, file: file, line: line)
+        XCTAssertEqual(actual.outputAssetID, expected.outputAssetID, file: file, line: line)
+        assertDateEqual(actual.updatedAt, expected.updatedAt, file: file, line: line)
+        XCTAssertEqual(actual.sections.count, expected.sections.count, file: file, line: line)
+
+        for (actualSection, expectedSection) in zip(actual.sections, expected.sections) {
+            XCTAssertEqual(actualSection.id, expectedSection.id, file: file, line: line)
+            XCTAssertEqual(actualSection.name, expectedSection.name, file: file, line: line)
+            XCTAssertEqual(actualSection.role, expectedSection.role, file: file, line: line)
+            XCTAssertEqual(actualSection.state, expectedSection.state, file: file, line: line)
+            XCTAssertEqual(actualSection.confidence, expectedSection.confidence, file: file, line: line)
+            XCTAssertEqual(actualSection.note, expectedSection.note, file: file, line: line)
+            XCTAssertEqual(actualSection.selections.count, expectedSection.selections.count, file: file, line: line)
+
+            for (actualSelection, expectedSelection) in zip(actualSection.selections, expectedSection.selections) {
+                XCTAssertEqual(actualSelection.id, expectedSelection.id, file: file, line: line)
+                XCTAssertEqual(actualSelection.kind, expectedSelection.kind, file: file, line: line)
+                XCTAssertEqual(actualSelection.referenceID, expectedSelection.referenceID, file: file, line: line)
+                XCTAssertEqual(actualSelection.decisionID, expectedSelection.decisionID, file: file, line: line)
+                assertDateEqual(actualSelection.selectedAt, expectedSelection.selectedAt, file: file, line: line)
+            }
+        }
+    }
+
     func testAcceptedCanonicalChangesRoundTripThroughGRDB() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let songID = UUID()
@@ -71,8 +147,11 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         // CanonicalSync normalizes Date values through the millisecond wire
         // contract before persistence. Compare disk with the accepted in-memory
         // canonical state, not the higher-precision pre-wire source objects.
-        XCTAssertEqual(loaded.decisions.first, catalog.decisions.first)
-        XCTAssertEqual(loaded.masterComposition(for: songID), catalog.masterComposition(for: songID))
+        assertDecisionEqual(loaded.decisions.first, catalog.decisions.first)
+        assertMasterCompositionEqual(
+            loaded.masterComposition(for: songID),
+            catalog.masterComposition(for: songID)
+        )
     }
 
     func testCanonicalTombstonesDeletePersistedRows() throws {
@@ -144,14 +223,6 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
 
         XCTAssertTrue(applied.isEmpty)
         let loaded = store.loadCatalog(artistName: "STICK").masterComposition(for: songID)
-        XCTAssertEqual(loaded?.id, local.id)
-        XCTAssertEqual(loaded?.songID, local.songID)
-        XCTAssertEqual(loaded?.outputAssetID, local.outputAssetID)
-        XCTAssertEqual(loaded?.sections, local.sections)
-        XCTAssertEqual(
-            loaded?.updatedAt.timeIntervalSince1970 ?? 0,
-            local.updatedAt.timeIntervalSince1970,
-            accuracy: 0.001
-        )
+        assertMasterCompositionEqual(loaded, local)
     }
 }
