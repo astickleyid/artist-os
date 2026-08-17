@@ -67,8 +67,12 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         let loaded = store.loadCatalog(artistName: "STICK")
         XCTAssertEqual(loaded.events.first?.beforeAssetID, assetA)
         XCTAssertEqual(loaded.events.first?.afterAssetID, assetB)
-        XCTAssertEqual(loaded.decisions.first, decision)
-        XCTAssertEqual(loaded.masterComposition(for: songID), composition)
+
+        // CanonicalSync normalizes Date values through the millisecond wire
+        // contract before persistence. Compare disk with the accepted in-memory
+        // canonical state, not the higher-precision pre-wire source objects.
+        XCTAssertEqual(loaded.decisions.first, catalog.decisions.first)
+        XCTAssertEqual(loaded.masterComposition(for: songID), catalog.masterComposition(for: songID))
     }
 
     func testCanonicalTombstonesDeletePersistedRows() throws {
@@ -139,6 +143,15 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         )
 
         XCTAssertTrue(applied.isEmpty)
-        XCTAssertEqual(store.loadCatalog(artistName: "STICK").masterComposition(for: songID), local)
+        let loaded = store.loadCatalog(artistName: "STICK").masterComposition(for: songID)
+        XCTAssertEqual(loaded?.id, local.id)
+        XCTAssertEqual(loaded?.songID, local.songID)
+        XCTAssertEqual(loaded?.outputAssetID, local.outputAssetID)
+        XCTAssertEqual(loaded?.sections, local.sections)
+        XCTAssertEqual(
+            loaded?.updatedAt.timeIntervalSince1970 ?? 0,
+            local.updatedAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
     }
 }
