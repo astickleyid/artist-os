@@ -2,8 +2,10 @@ import Foundation
 import ArtistOSCore
 
 /// Bridges the pure cross-platform CanonicalSync application algorithm to the
-/// macOS GRDB store. The in-memory catalog is mutated first; only changes that
-/// CanonicalSync actually accepts under its LWW/identity rules are persisted.
+/// macOS GRDB store. Remote changes are first applied to a candidate catalog;
+/// the accepted batch is then persisted in one SQLite transaction. The caller's
+/// in-memory catalog is only replaced after that transaction succeeds, so memory
+/// and disk cannot diverge on a partial sync write.
 enum CanonicalSyncPersistence {
     @discardableResult
     static func apply(
@@ -11,47 +13,12 @@ enum CanonicalSyncPersistence {
         to catalog: inout ArtistCatalog,
         store: CatalogStore
     ) throws -> [CanonicalSync.AppliedChange] {
-        let applied = CanonicalSync.apply(changes: changes, to: &catalog)
+        var candidate = catalog
+        let applied = CanonicalSync.apply(changes: changes, to: &candidate)
+        guard !applied.isEmpty else { return [] }
 
-        for change in applied {
-            switch change.kind {
-            case .song:
-                if change.deleted {
-                    try store.delete(songID: change.id)
-                } else if let song = catalog.songs.first(where: { $0.id == change.id }) {
-                    try store.upsert(song: song)
-                }
-
-            case .asset:
-                if change.deleted {
-                    try store.delete(assetID: change.id)
-                } else if let asset = catalog.assets.first(where: { $0.id == change.id }) {
-                    try store.insert(asset: asset)
-                }
-
-            case .event:
-                if change.deleted {
-                    try store.delete(eventID: change.id)
-                } else if let event = catalog.events.first(where: { $0.id == change.id }) {
-                    try store.append(event: event)
-                }
-
-            case .decision:
-                if change.deleted {
-                    try store.delete(decisionID: change.id)
-                } else if let decision = catalog.decisions.first(where: { $0.id == change.id }) {
-                    try store.append(decision: decision)
-                }
-
-            case .masterComposition:
-                if change.deleted {
-                    try store.delete(masterCompositionID: change.id)
-                } else if let composition = catalog.masterCompositions.first(where: { $0.id == change.id }) {
-                    try store.upsert(masterComposition: composition)
-                }
-            }
-        }
-
+        try store.persistCanonicalSync(applied, catalog: candidate)
+        catalog = candidate
         return applied
     }
 }
