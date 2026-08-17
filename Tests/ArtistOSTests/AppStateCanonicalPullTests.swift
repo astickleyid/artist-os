@@ -61,21 +61,24 @@ final class AppStateCanonicalPullTests: XCTestCase {
         try store.upsert(song: first)
         try store.upsert(song: second)
 
-        let asset = Asset(
+        // Intentionally select an asset that belongs to the surviving song.
+        // When the selected Song itself disappears, the UI still needs to clear
+        // asset selection just like the local deleteSong path does.
+        let survivingAsset = Asset(
             id: UUID(),
-            title: "Selected",
-            originalFilename: "selected.wav",
+            title: "Surviving selection",
+            originalFilename: "surviving.wav",
             role: .fullMix,
             createdAt: Date(),
             duration: 1,
             localURLBookmark: nil,
-            songID: first.id
+            songID: second.id
         )
-        try store.insert(asset: asset)
+        try store.insert(asset: survivingAsset)
 
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.selectedSongID = first.id
-        state.selectedAssetID = asset.id
+        state.selectedAssetID = survivingAsset.id
 
         let applied = try state.applyCanonicalCloudChanges([
             SyncLogic.tombstone(kindRaw: "song", id: first.id.uuidString)
@@ -83,13 +86,13 @@ final class AppStateCanonicalPullTests: XCTestCase {
 
         XCTAssertEqual(applied.count, 1)
         XCTAssertFalse(state.catalog.songs.contains(where: { $0.id == first.id }))
-        XCTAssertFalse(state.catalog.assets.contains(where: { $0.id == asset.id }))
+        XCTAssertTrue(state.catalog.assets.contains(where: { $0.id == survivingAsset.id }))
         XCTAssertEqual(state.selectedSongID, second.id)
         XCTAssertNil(state.selectedAssetID)
 
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertFalse(reloaded.songs.contains(where: { $0.id == first.id }))
-        XCTAssertFalse(reloaded.assets.contains(where: { $0.id == asset.id }))
+        XCTAssertTrue(reloaded.assets.contains(where: { $0.id == survivingAsset.id }))
     }
 
     func testCanonicalPullRejectsStaleCompositionWithoutMutatingSelection() throws {
