@@ -63,11 +63,48 @@ final class CanonicalSyncTests: XCTestCase {
         XCTAssertEqual(applied.map(\.kind), [.event, .decision, .masterComposition])
         XCTAssertEqual(catalog.events.first?.beforeAssetID, assetA)
         XCTAssertEqual(catalog.events.first?.afterAssetID, assetB)
-        XCTAssertEqual(catalog.decisions.first, decision)
-        XCTAssertEqual(catalog.masterComposition(for: songID), composition)
+
+        let syncedDecision = try XCTUnwrap(catalog.decisions.first)
+        XCTAssertEqual(syncedDecision.id, decision.id)
+        XCTAssertEqual(syncedDecision.songID, decision.songID)
+        XCTAssertEqual(syncedDecision.target, decision.target)
+        XCTAssertEqual(syncedDecision.action, decision.action)
+        XCTAssertEqual(syncedDecision.selectedAssetID, decision.selectedAssetID)
+        XCTAssertEqual(syncedDecision.rejectedAssetIDs, decision.rejectedAssetIDs)
+        XCTAssertEqual(syncedDecision.relatedEventIDs, decision.relatedEventIDs)
+        XCTAssertEqual(syncedDecision.reason, decision.reason)
+        XCTAssertEqual(syncedDecision.source, decision.source)
         XCTAssertEqual(
-            catalog.masterComposition(for: songID)?.sections.first?.selection(.sourceAsset)?.decisionID,
+            syncedDecision.timestamp.timeIntervalSince1970,
+            decision.timestamp.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+
+        let syncedComposition = try XCTUnwrap(catalog.masterComposition(for: songID))
+        XCTAssertEqual(syncedComposition.id, composition.id)
+        XCTAssertEqual(syncedComposition.songID, composition.songID)
+        XCTAssertEqual(syncedComposition.outputAssetID, composition.outputAssetID)
+        XCTAssertEqual(syncedComposition.sections.count, 1)
+        XCTAssertEqual(syncedComposition.sections.first?.id, sectionID)
+        XCTAssertEqual(syncedComposition.sections.first?.name, "Hook")
+        XCTAssertEqual(syncedComposition.sections.first?.state, .locked)
+        XCTAssertEqual(
+            syncedComposition.updatedAt.timeIntervalSince1970,
+            composition.updatedAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            syncedComposition.sections.first?.selection(.sourceAsset)?.decisionID,
             decisionID
+        )
+        XCTAssertEqual(
+            syncedComposition.sections.first?.selection(.sourceAsset)?.referenceID,
+            assetB
+        )
+        XCTAssertEqual(
+            syncedComposition.sections.first?.selection(.sourceAsset)?.selectedAt.timeIntervalSince1970 ?? 0,
+            composition.sections.first?.selection(.sourceAsset)?.selectedAt.timeIntervalSince1970 ?? 0,
+            accuracy: 0.001
         )
     }
 
