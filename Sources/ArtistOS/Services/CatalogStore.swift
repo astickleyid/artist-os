@@ -190,6 +190,35 @@ final class CatalogStore {
         }
     }
 
+    // MARK: - Canonical sync deletion primitives
+
+    /// Remote tombstones must remove the same local persisted truth that was
+    /// removed from the in-memory catalog. These are intentionally narrow;
+    /// song deletion remains the ownership-level cascade above.
+    func delete(assetID: UUID) throws {
+        _ = try database.dbQueue.write { db in
+            try AssetRecord.filter(Column("id") == assetID).deleteAll(db)
+        }
+    }
+
+    func delete(eventID: UUID) throws {
+        _ = try database.dbQueue.write { db in
+            try EventRecord.filter(Column("id") == eventID).deleteAll(db)
+        }
+    }
+
+    func delete(decisionID: UUID) throws {
+        _ = try database.dbQueue.write { db in
+            try DecisionRecord.filter(Column("id") == decisionID).deleteAll(db)
+        }
+    }
+
+    func delete(masterCompositionID: UUID) throws {
+        _ = try database.dbQueue.write { db in
+            try MasterCompositionRecord.filter(Column("id") == masterCompositionID).deleteAll(db)
+        }
+    }
+
     // MARK: - Watched folders
 
     func watchedFolders() -> [WatchedFolder] {
