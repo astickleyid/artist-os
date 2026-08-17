@@ -42,14 +42,14 @@ final class AppStateCanonicalPullTests: XCTestCase {
         XCTAssertEqual(applied.count, 2)
         XCTAssertEqual(state.catalog.decisions.map(\.id), [decision.id])
         XCTAssertEqual(
-            state.catalog.masterCompositions.first?.sections[0].selection(of: .sourceAsset)?.decisionID,
+            state.catalog.masterCompositions.first?.sections[0].selection(.sourceAsset)?.decisionID,
             decision.id
         )
 
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.decisions.map(\.id), [decision.id])
         XCTAssertEqual(
-            reloaded.masterCompositions.first?.sections[0].selection(of: .sourceAsset)?.referenceID,
+            reloaded.masterCompositions.first?.sections[0].selection(.sourceAsset)?.referenceID,
             assetID
         )
     }
