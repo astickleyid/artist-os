@@ -31,7 +31,7 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
             return
         }
         guard let expected else {
-            return XCTFail("Expected decision to round-trip from persistence", file: file, line: line)
+            return XCTFail("Persisted decision was unexpectedly non-nil", file: file, line: line)
         }
         XCTAssertEqual(actual.id, expected.id, file: file, line: line)
         XCTAssertEqual(actual.songID, expected.songID, file: file, line: line)
@@ -58,7 +58,7 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
             return
         }
         guard let expected else {
-            return XCTFail("Expected composition to round-trip from persistence", file: file, line: line)
+            return XCTFail("Persisted composition was unexpectedly non-nil", file: file, line: line)
         }
         XCTAssertEqual(actual.id, expected.id, file: file, line: line)
         XCTAssertEqual(actual.songID, expected.songID, file: file, line: line)
