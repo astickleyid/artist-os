@@ -68,11 +68,52 @@ final class CanonicalSyncPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.events.first?.beforeAssetID, assetA)
         XCTAssertEqual(loaded.events.first?.afterAssetID, assetB)
 
-        // CanonicalSync normalizes Date values through the millisecond wire
-        // contract before persistence. Compare disk with the accepted in-memory
-        // canonical state, not the higher-precision pre-wire source objects.
-        XCTAssertEqual(loaded.decisions.first, catalog.decisions.first)
-        XCTAssertEqual(loaded.masterComposition(for: songID), catalog.masterComposition(for: songID))
+        let memoryDecision = try XCTUnwrap(catalog.decisions.first)
+        let diskDecision = try XCTUnwrap(loaded.decisions.first)
+        XCTAssertEqual(diskDecision.id, memoryDecision.id)
+        XCTAssertEqual(diskDecision.songID, memoryDecision.songID)
+        XCTAssertEqual(diskDecision.target, memoryDecision.target)
+        XCTAssertEqual(diskDecision.action, memoryDecision.action)
+        XCTAssertEqual(diskDecision.selectedAssetID, memoryDecision.selectedAssetID)
+        XCTAssertEqual(diskDecision.rejectedAssetIDs, memoryDecision.rejectedAssetIDs)
+        XCTAssertEqual(diskDecision.relatedEventIDs, memoryDecision.relatedEventIDs)
+        XCTAssertEqual(diskDecision.reason, memoryDecision.reason)
+        XCTAssertEqual(diskDecision.source, memoryDecision.source)
+        XCTAssertEqual(
+            diskDecision.timestamp.timeIntervalSince1970,
+            memoryDecision.timestamp.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+
+        let memoryComposition = try XCTUnwrap(catalog.masterComposition(for: songID))
+        let diskComposition = try XCTUnwrap(loaded.masterComposition(for: songID))
+        XCTAssertEqual(diskComposition.id, memoryComposition.id)
+        XCTAssertEqual(diskComposition.songID, memoryComposition.songID)
+        XCTAssertEqual(diskComposition.outputAssetID, memoryComposition.outputAssetID)
+        XCTAssertEqual(diskComposition.sections.count, memoryComposition.sections.count)
+        XCTAssertEqual(diskComposition.sections.first?.id, memoryComposition.sections.first?.id)
+        XCTAssertEqual(diskComposition.sections.first?.name, memoryComposition.sections.first?.name)
+        XCTAssertEqual(diskComposition.sections.first?.role, memoryComposition.sections.first?.role)
+        XCTAssertEqual(diskComposition.sections.first?.state, memoryComposition.sections.first?.state)
+        XCTAssertEqual(diskComposition.sections.first?.confidence, memoryComposition.sections.first?.confidence)
+        XCTAssertEqual(diskComposition.sections.first?.note, memoryComposition.sections.first?.note)
+        XCTAssertEqual(
+            diskComposition.updatedAt.timeIntervalSince1970,
+            memoryComposition.updatedAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+
+        let memorySelection = try XCTUnwrap(memoryComposition.sections.first?.selection(.sourceAsset))
+        let diskSelection = try XCTUnwrap(diskComposition.sections.first?.selection(.sourceAsset))
+        XCTAssertEqual(diskSelection.id, memorySelection.id)
+        XCTAssertEqual(diskSelection.kind, memorySelection.kind)
+        XCTAssertEqual(diskSelection.referenceID, memorySelection.referenceID)
+        XCTAssertEqual(diskSelection.decisionID, memorySelection.decisionID)
+        XCTAssertEqual(
+            diskSelection.selectedAt.timeIntervalSince1970,
+            memorySelection.selectedAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
     }
 
     func testCanonicalTombstonesDeletePersistedRows() throws {
