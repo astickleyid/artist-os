@@ -479,60 +479,7 @@ final class AppState: ObservableObject {
 
     func pullFromCloud() async throws {
         let changes = try await sync.pullAll()
-        for change in changes {
-            guard let kindRaw = change["kind"] as? String, let kind = SyncLogic.Kind(rawValue: kindRaw),
-                  let idString = change["id"] as? String,
-                  let updatedAtMs = (change["updatedAt"] as? NSNumber)?.doubleValue
-            else { continue }
-            let deleted = (change["deleted"] as? Bool) ?? false
-            let remoteDate = SyncLogic.date(fromMs: updatedAtMs)
-
-            switch kind {
-            case .song:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                let idx = catalog.songs.firstIndex(where: { $0.id == uuid })
-                if deleted { if let idx { catalog.songs.remove(at: idx) }; continue }
-                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
-                    overLocal: idx.map { catalog.songs[$0].updatedAt } ?? .distantPast) else { continue }
-                guard let payload = change["data"] as? SyncLogic.JSONDict,
-                      let merged = SyncLogic.mergedSong(payload: payload, updatedAt: remoteDate,
-                        existing: idx.map { catalog.songs[$0] })
-                else { continue }
-                if let idx { catalog.songs[idx] = merged } else { catalog.songs.append(merged) }
-                try? store.upsert(song: merged)
-
-            case .asset:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                let idx = catalog.assets.firstIndex(where: { $0.id == uuid })
-                if deleted { if let idx { catalog.assets.remove(at: idx) }; continue }
-                guard SyncLogic.shouldApplyRemote(updatedAt: updatedAtMs,
-                    overLocal: idx.map { catalog.assets[$0].updatedAt } ?? .distantPast) else { continue }
-                guard let payload = change["data"] as? SyncLogic.JSONDict,
-                      let merged = SyncLogic.mergedAsset(payload: payload, updatedAt: remoteDate,
-                        existing: idx.map { catalog.assets[$0] })
-                else { continue }
-                if let idx { catalog.assets[idx] = merged } else { catalog.assets.append(merged) }
-                try? store.insert(asset: merged)
-
-            case .event:
-                guard let uuid = UUID(uuidString: idString) else { continue }
-                if deleted { catalog.events.removeAll { $0.id == uuid }; continue }
-                guard !catalog.events.contains(where: { $0.id == uuid }),
-                      let payload = change["data"] as? SyncLogic.JSONDict,
-                      let songIdString = payload["songId"] as? String, let songID = UUID(uuidString: songIdString),
-                      let targetRaw = payload["target"] as? String, let target = EventTarget(rawValue: targetRaw),
-                      let opRaw = payload["op"] as? String, let operation = EventOperation(rawValue: opRaw),
-                      let summary = payload["summary"] as? String
-                else { continue }
-                let confidence = (payload["confidence"] as? NSNumber)?.doubleValue ?? 1.0
-                let event = CreativeEvent(id: uuid, songID: songID, timestamp: remoteDate, target: target,
-                                          operation: operation, beforeAssetID: nil, afterAssetID: nil,
-                                          summary: summary, confidence: confidence)
-                catalog.events.append(event)
-                try? store.append(event: event)
-            }
-        }
-        runDecisionEngine()
+        _ = try applyCanonicalCloudChanges(changes)
     }
 
     func uploadAssetToCloud(_ assetID: UUID) async {
