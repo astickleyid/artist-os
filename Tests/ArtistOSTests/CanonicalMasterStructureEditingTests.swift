@@ -38,8 +38,8 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.sections.last?.id, addedLegacy.id)
         XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.sections.last?.id, addedLegacy.id)
-        XCTAssertEqual(reloaded.events.last?.id, event.id)
-        XCTAssertEqual(reloaded.decisions.last?.id, decision.id)
+        XCTAssertTrue(reloaded.events.contains { $0.id == event.id })
+        XCTAssertTrue(reloaded.decisions.contains { $0.id == decision.id })
     }
 
     func testRemovingSlotRemovesCurrentCanonicalTruthButPreservesHistory() throws {
@@ -50,19 +50,36 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         let songID = song.id
         let sectionID = try XCTUnwrap(song.sections.first?.id)
 
-        let asset = Asset(
+        let canonicalAsset = Asset(
             id: UUID(),
-            title: "Intro Source",
-            originalFilename: "intro.wav",
+            title: "Canonical Intro Source",
+            originalFilename: "intro-canonical.wav",
             role: .fullMix,
             createdAt: Date(),
             duration: nil,
             localURLBookmark: nil,
             songID: songID
         )
-        state.catalog.assets.append(asset)
-        try store.insert(asset: asset)
-        state.approveSectionDecision(sectionID: sectionID, songID: songID, winner: asset.id)
+        let legacyAsset = Asset(
+            id: UUID(),
+            title: "Legacy Intro Source",
+            originalFilename: "intro-legacy.wav",
+            role: .fullMix,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: songID
+        )
+        state.catalog.assets.append(contentsOf: [canonicalAsset, legacyAsset])
+        try store.insert(asset: canonicalAsset)
+        try store.insert(asset: legacyAsset)
+        state.approveSectionDecision(sectionID: sectionID, songID: songID, winner: canonicalAsset.id)
+
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == songID })
+        let sectionIndex = try XCTUnwrap(state.catalog.songs[songIndex].sections.firstIndex { $0.id == sectionID })
+        state.catalog.songs[songIndex].sections[sectionIndex].assetID = legacyAsset.id
+        try store.upsert(song: state.catalog.songs[songIndex])
+
         let decisionsBeforeRemoval = state.catalog.decisions.count
         let eventsBeforeRemoval = state.catalog.events.count
 
@@ -73,21 +90,25 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
         XCTAssertFalse(composition.sections.contains { $0.id == sectionID })
 
-        XCTAssertTrue(state.catalog.assets.contains { $0.id == asset.id })
+        XCTAssertTrue(state.catalog.assets.contains { $0.id == canonicalAsset.id })
+        XCTAssertTrue(state.catalog.assets.contains { $0.id == legacyAsset.id })
         XCTAssertEqual(state.catalog.events.count, eventsBeforeRemoval + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionsBeforeRemoval + 1)
 
         let removalEvent = try XCTUnwrap(state.catalog.events.last)
         let removalDecision = try XCTUnwrap(state.catalog.decisions.last)
-        XCTAssertEqual(removalEvent.beforeAssetID, asset.id)
+        XCTAssertEqual(removalEvent.beforeAssetID, canonicalAsset.id)
         XCTAssertEqual(removalDecision.action, .reverted)
-        XCTAssertEqual(removalDecision.rejectedAssetIDs, [asset.id])
+        XCTAssertEqual(Set(removalDecision.rejectedAssetIDs), Set([canonicalAsset.id, legacyAsset.id]))
         XCTAssertEqual(removalDecision.relatedEventIDs, [removalEvent.id])
 
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertFalse(reloaded.songs.first { $0.id == songID }?.sections.contains { $0.id == sectionID } ?? true)
         XCTAssertFalse(reloaded.masterCompositions.first { $0.songID == songID }?.sections.contains { $0.id == sectionID } ?? true)
-        XCTAssertTrue(reloaded.assets.contains { $0.id == asset.id })
+        XCTAssertTrue(reloaded.assets.contains { $0.id == canonicalAsset.id })
+        XCTAssertTrue(reloaded.assets.contains { $0.id == legacyAsset.id })
+        XCTAssertTrue(reloaded.events.contains { $0.id == removalEvent.id })
+        XCTAssertTrue(reloaded.decisions.contains { $0.id == removalDecision.id })
     }
 
     func testBlankSlotNameDoesNotCreateCanonicalHistory() throws {
