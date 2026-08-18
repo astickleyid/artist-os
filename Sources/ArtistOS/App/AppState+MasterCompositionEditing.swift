@@ -166,6 +166,9 @@ extension AppState {
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         guard let canonicalIndex = composition.sections.firstIndex(where: { $0.id == sectionID }) else { return }
         let removed = composition.sections[canonicalIndex]
+        let legacySourceID = catalog.songs[songIndex].sections
+            .first(where: { $0.id == sectionID })?
+            .assetID
 
         let timestamp = Date()
         composition.sections.remove(at: canonicalIndex)
@@ -176,9 +179,14 @@ extension AppState {
         recomputeMasterProgress(&updatedSong)
         updatedSong.updatedAt = timestamp
 
-        let removedAssetIDs = removed.selections.compactMap { selection -> UUID? in
+        var removedAssetIDs: [UUID] = []
+        let canonicalSourceIDs = removed.selections.compactMap { selection -> UUID? in
             selection.kind == .sourceAsset ? selection.referenceID : nil
         }
+        for id in canonicalSourceIDs + [legacySourceID].compactMap({ $0 }) where !removedAssetIDs.contains(id) {
+            removedAssetIDs.append(id)
+        }
+
         let event = CreativeEvent(
             id: UUID(),
             songID: songID,
