@@ -19,9 +19,11 @@ extension AppState {
         else { return }
 
         let oldSection = catalog.songs[songIndex].sections[sectionIndex]
-        let oldSourceID = catalog.masterComposition(for: songID)?
+        let canonicalSourceID = catalog.masterComposition(for: songID)?
             .sections.first(where: { $0.id == sectionID })?
-            .selection(.sourceAsset)?.referenceID ?? oldSection.assetID
+            .selection(.sourceAsset)?.referenceID
+        let legacySourceID = oldSection.assetID
+        let oldSourceID = canonicalSourceID ?? legacySourceID
         guard oldSourceID != nil else { return }
 
         let timestamp = Date()
@@ -44,6 +46,12 @@ extension AppState {
             summary: "\(oldSection.name) source cleared.",
             confidence: 1
         )
+
+        var clearedSourceIDs: [UUID] = []
+        for id in [canonicalSourceID, legacySourceID].compactMap({ $0 }) where !clearedSourceIDs.contains(id) {
+            clearedSourceIDs.append(id)
+        }
+
         let decision = CreativeDecision(
             id: UUID(),
             songID: songID,
@@ -51,7 +59,7 @@ extension AppState {
             target: target,
             action: .reverted,
             selectedAssetID: nil,
-            rejectedAssetIDs: oldSourceID.map { [$0] } ?? [],
+            rejectedAssetIDs: clearedSourceIDs,
             relatedEventIDs: [event.id],
             reason: nil,
             source: .artist
