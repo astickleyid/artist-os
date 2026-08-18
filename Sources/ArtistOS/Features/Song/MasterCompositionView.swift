@@ -81,7 +81,7 @@ struct MasterSectionRow: View {
     @State private var isComparing = false
 
     private var sourceAssetID: UUID? {
-        section.selection(.sourceAsset)?.referenceID
+        section.selection(.sourceAsset)?.referenceID ?? legacySection?.assetID
     }
 
     private var asset: Asset? { state.asset(id: sourceAssetID) }
