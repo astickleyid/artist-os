@@ -8,8 +8,8 @@ struct MasterCompositionView: View {
     @State private var isAddingSlot = false
     @State private var newSlotName = ""
 
-    private var composition: MasterComposition? {
-        state.catalog.masterComposition(for: song.id)
+    private var composition: MasterComposition {
+        state.catalog.masterComposition(for: song.id) ?? MasterComposition.projected(from: song)
     }
 
     private var hasPersistedComposition: Bool {
@@ -39,18 +39,20 @@ struct MasterCompositionView: View {
                 .buttonStyle(.bordered)
             }
 
-            ForEach(Array(song.sections.enumerated()), id: \.element.id) { index, section in
+            // Master Composition is now the workspace read model. Legacy Song.sections
+            // remains a compatibility mirror for unmigrated annotations and old catalogs.
+            ForEach(Array(composition.sections.enumerated()), id: \.element.id) { index, section in
                 MasterSectionRow(
                     index: index + 1,
                     song: song,
                     section: section,
-                    canonicalSection: composition?.sections.first(where: { $0.id == section.id })
+                    legacySection: song.sections.first(where: { $0.id == section.id })
                 )
                 .aosHoverable(cornerRadius: 17)
             }
-            .animation(.snappy(duration: 0.25), value: song.sections.map(\.id))
+            .animation(.snappy(duration: 0.25), value: composition.sections.map(\.id))
 
-            if song.sections.isEmpty {
+            if composition.sections.isEmpty {
                 Text("No master slots yet. Add a slot to start structuring this song.")
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
@@ -70,8 +72,8 @@ struct MasterSectionRow: View {
 
     let index: Int
     let song: Song
-    let section: MasterSection
-    let canonicalSection: MasterCompositionSection?
+    let section: MasterCompositionSection
+    let legacySection: MasterSection?
 
     @State private var isEditingNote = false
     @State private var noteDraft = ""
@@ -79,15 +81,33 @@ struct MasterSectionRow: View {
     @State private var isComparing = false
 
     private var sourceAssetID: UUID? {
-        canonicalSection?.selection(.sourceAsset)?.referenceID ?? section.assetID
+        section.selection(.sourceAsset)?.referenceID ?? legacySection?.assetID
     }
 
     private var asset: Asset? { state.asset(id: sourceAssetID) }
 
+    /// Notes are still edited through the legacy compatibility path. Prefer that
+    /// value until note semantics are migrated deliberately rather than turning
+    /// every annotation into a CreativeDecision.
+    private var displayedNote: String {
+        legacySection?.note ?? section.note
+    }
+
+    private var comparisonSection: MasterSection {
+        MasterSection(
+            id: section.id,
+            name: section.name,
+            role: section.role,
+            assetID: sourceAssetID,
+            state: section.state,
+            confidence: section.confidence,
+            note: displayedNote
+        )
+    }
+
     private var additionalCanonicalLayers: [MasterSelectionKind] {
-        guard let canonicalSection else { return [] }
-        return [.processingSnapshot, .automationSnapshot, .compRecipe].filter {
-            canonicalSection.selection($0) != nil
+        [.processingSnapshot, .automationSnapshot, .compRecipe].filter {
+            section.selection($0) != nil
         }
     }
 
@@ -121,7 +141,7 @@ struct MasterSectionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(asset?.title ?? "No asset selected")
                     .font(.subheadline.weight(.bold))
-                Text(asset?.originalFilename ?? (section.note.isEmpty ? "Assign a source from this song's assets." : section.note))
+                Text(asset?.originalFilename ?? (displayedNote.isEmpty ? "Assign a source from this song's assets." : displayedNote))
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
                     .lineLimit(1)
@@ -185,7 +205,7 @@ struct MasterSectionRow: View {
             noteEditor
         }
         .sheet(isPresented: $isComparing) {
-            CompareSheet(song: song, section: section)
+            CompareSheet(song: song, section: comparisonSection)
         }
     }
 
@@ -214,7 +234,7 @@ struct MasterSectionRow: View {
                 }
             }
             Button("Edit Note…") {
-                noteDraft = section.note
+                noteDraft = displayedNote
                 isEditingNote = true
             }
             Button("Compare Candidates…") {
