@@ -447,6 +447,8 @@ final class AppState: ObservableObject {
         let changes = catalog.songs.map(SyncLogic.change(forSong:))
             + catalog.assets.map(SyncLogic.change(forAsset:))
             + catalog.events.map(SyncLogic.change(forEvent:))
+            + catalog.decisions.map(SyncLogic.change(forDecision:))
+            + catalog.masterCompositions.map(SyncLogic.change(forMasterComposition:))
         _ = try await sync.push(changes: changes)
     }
 
