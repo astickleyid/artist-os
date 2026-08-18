@@ -59,7 +59,7 @@ struct MasterCompositionView: View {
         }
         .alert("New Master Slot", isPresented: $isAddingSlot) {
             TextField("Slot name (e.g. Verse 2)", text: $newSlotName)
-            Button("Add") { state.addSection(name: newSlotName, songID: song.id) }
+            Button("Add") { state.addCanonicalSection(name: newSlotName, songID: song.id) }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -229,7 +229,7 @@ struct MasterSectionRow: View {
             }
             Divider()
             Button("Remove Slot", role: .destructive) {
-                state.removeSection(sectionID: section.id, songID: song.id)
+                state.removeCanonicalSection(sectionID: section.id, songID: song.id)
             }
         } label: {
             Image(systemName: "ellipsis.circle")
