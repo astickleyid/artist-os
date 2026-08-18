@@ -59,6 +59,50 @@ final class AppStateSyncTests: XCTestCase {
         XCTAssertTrue(state.catalog.songs.contains { $0.title == "From Another Device" })
     }
 
+    func testPullFromCloudPersistsCanonicalDecisionAndMasterComposition() async throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let songID = UUID()
+        let song = Song(
+            id: songID, title: "Canonical Pull", era: "2026", status: .review,
+            progress: 0, qualityScore: 0, risk: "low", sections: [], updatedAt: Date()
+        )
+        store.seed(ArtistCatalog(artistName: "STICK", songs: [song], assets: [], events: []))
+
+        let decision = CreativeDecision(
+            id: UUID(), songID: songID, timestamp: Date().addingTimeInterval(10),
+            target: .song, action: .approved, selectedAssetID: nil,
+            reason: "Keep this structure", source: .artist
+        )
+        let composition = MasterComposition(
+            id: UUID(), songID: songID, sections: [],
+            updatedAt: Date().addingTimeInterval(11)
+        )
+
+        let fake = FakeHTTPClient(script: [
+            .init(json: ["accountId": "acc1", "token": "tok1"], status: 201),
+            .init(json: ["applied": 1, "skipped": 0, "seq": 1]),
+            .init(json: [
+                "changes": [
+                    SyncLogic.change(forDecision: decision),
+                    SyncLogic.change(forMasterComposition: composition)
+                ],
+                "seq": 2, "hasMore": false
+            ])
+        ])
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false,
+                             sync: SyncService(client: fake, defaults: freshDefaults()))
+
+        await state.enableSync()
+        try await state.pullFromCloud()
+
+        XCTAssertEqual(state.catalog.decisions.first?.id, decision.id)
+        XCTAssertEqual(state.catalog.masterComposition(for: songID)?.id, composition.id)
+
+        let reloaded = store.loadCatalog(artistName: "STICK")
+        XCTAssertEqual(reloaded.decisions.first?.id, decision.id)
+        XCTAssertEqual(reloaded.masterComposition(for: songID)?.id, composition.id)
+    }
+
     func testPersistingASongMarksItDirtyForTheNextDebouncedPush() async throws {
         // Verifies the wiring point itself (persist -> markDirty) without
         // waiting out the real debounce timer: enabling sync flushes the
