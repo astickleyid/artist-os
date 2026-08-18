@@ -209,7 +209,7 @@ struct MasterSectionRow: View {
             Menu("Set State") {
                 ForEach(SectionState.allCases, id: \.rawValue) { candidate in
                     Button(candidate.rawValue) {
-                        state.setState(candidate, sectionID: section.id, songID: song.id)
+                        state.setCanonicalSectionState(candidate, sectionID: section.id, songID: song.id)
                     }
                 }
             }
@@ -222,10 +222,10 @@ struct MasterSectionRow: View {
             }
             Divider()
             Button("Move Up") {
-                state.moveSection(sectionID: section.id, songID: song.id, offset: -1)
+                state.moveCanonicalSection(sectionID: section.id, songID: song.id, offset: -1)
             }
             Button("Move Down") {
-                state.moveSection(sectionID: section.id, songID: song.id, offset: 1)
+                state.moveCanonicalSection(sectionID: section.id, songID: song.id, offset: 1)
             }
             Divider()
             Button("Remove Slot", role: .destructive) {
