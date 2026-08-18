@@ -74,26 +74,172 @@ extension AppState {
         composition.sections[compositionSectionIndex].confidence = 0
         composition.updatedAt = timestamp
 
+        commitMasterEdit(
+            song: updatedSong,
+            event: event,
+            decision: decision,
+            composition: composition,
+            failureMessage: "Clear source transaction failed"
+        )
+    }
+
+    /// Adds a structural slot to both the canonical composition and the legacy
+    /// compatibility mirror in one transaction. The artist action is preserved
+    /// as a Decision; the Event remains the factual record of the structure edit.
+    func addCanonicalSection(name: String, songID: UUID) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let songIndex = catalog.songs.firstIndex(where: { $0.id == songID })
+        else { return }
+
+        let timestamp = Date()
+        let sectionID = UUID()
+        let legacySection = MasterSection(
+            id: sectionID,
+            name: trimmed,
+            role: "Custom",
+            assetID: nil,
+            state: .open,
+            confidence: 0,
+            note: ""
+        )
+        let canonicalSection = MasterCompositionSection(
+            id: sectionID,
+            name: trimmed,
+            role: "Custom",
+            selections: [],
+            state: .open,
+            confidence: 0,
+            note: ""
+        )
+
+        var updatedSong = catalog.songs[songIndex]
+        updatedSong.sections.append(legacySection)
+        recomputeMasterProgress(&updatedSong)
+        updatedSong.updatedAt = timestamp
+
+        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
+            ?? MasterComposition.projected(from: catalog.songs[songIndex])
+        composition.sections.append(canonicalSection)
+        composition.updatedAt = timestamp
+
+        let event = CreativeEvent(
+            id: UUID(),
+            songID: songID,
+            timestamp: timestamp,
+            target: .song,
+            operation: .structureUpdated,
+            beforeAssetID: nil,
+            afterAssetID: nil,
+            summary: "\(trimmed) slot added to master composition.",
+            confidence: 1
+        )
+        let decision = CreativeDecision(
+            id: UUID(),
+            songID: songID,
+            timestamp: timestamp,
+            target: .song,
+            action: .approved,
+            selectedAssetID: nil,
+            rejectedAssetIDs: [],
+            relatedEventIDs: [event.id],
+            reason: "Added \(trimmed) to the current song structure.",
+            source: .artist
+        )
+
+        commitMasterEdit(
+            song: updatedSong,
+            event: event,
+            decision: decision,
+            composition: composition,
+            failureMessage: "Add master slot transaction failed"
+        )
+    }
+
+    /// Removes a structural slot from canonical truth and the compatibility
+    /// mirror atomically. Existing selections disappear from current intent but
+    /// remain recoverable through immutable Assets, Events and Decision history.
+    func removeCanonicalSection(sectionID: UUID, songID: UUID) {
+        guard let songIndex = catalog.songs.firstIndex(where: { $0.id == songID }) else { return }
+
+        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
+            ?? MasterComposition.projected(from: catalog.songs[songIndex])
+        guard let canonicalIndex = composition.sections.firstIndex(where: { $0.id == sectionID }) else { return }
+        let removed = composition.sections[canonicalIndex]
+
+        let timestamp = Date()
+        composition.sections.remove(at: canonicalIndex)
+        composition.updatedAt = timestamp
+
+        var updatedSong = catalog.songs[songIndex]
+        updatedSong.sections.removeAll { $0.id == sectionID }
+        recomputeMasterProgress(&updatedSong)
+        updatedSong.updatedAt = timestamp
+
+        let removedAssetIDs = removed.selections.compactMap { selection -> UUID? in
+            selection.kind == .sourceAsset ? selection.referenceID : nil
+        }
+        let event = CreativeEvent(
+            id: UUID(),
+            songID: songID,
+            timestamp: timestamp,
+            target: .song,
+            operation: .structureUpdated,
+            beforeAssetID: removedAssetIDs.first,
+            afterAssetID: nil,
+            summary: "\(removed.name) slot removed from master composition.",
+            confidence: 1
+        )
+        let decision = CreativeDecision(
+            id: UUID(),
+            songID: songID,
+            timestamp: timestamp,
+            target: .song,
+            action: .reverted,
+            selectedAssetID: nil,
+            rejectedAssetIDs: removedAssetIDs,
+            relatedEventIDs: [event.id],
+            reason: "Removed \(removed.name) from the current song structure.",
+            source: .artist
+        )
+
+        commitMasterEdit(
+            song: updatedSong,
+            event: event,
+            decision: decision,
+            composition: composition,
+            failureMessage: "Remove master slot transaction failed"
+        )
+    }
+
+    private func commitMasterEdit(
+        song: Song,
+        event: CreativeEvent,
+        decision: CreativeDecision,
+        composition: MasterComposition,
+        failureMessage: String
+    ) {
         do {
             try store.commitApproval(
-                song: updatedSong,
+                song: song,
                 events: [event],
                 decision: decision,
                 masterComposition: composition
             )
         } catch {
-            masterEditingLogger.error("Clear source transaction failed: \(error.localizedDescription)")
+            masterEditingLogger.error("\(failureMessage): \(error.localizedDescription)")
             return
         }
 
-        catalog.songs[songIndex] = updatedSong
+        guard let songIndex = catalog.songs.firstIndex(where: { $0.id == song.id }) else { return }
+        catalog.songs[songIndex] = song
         catalog.events.append(event)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
 
         guard syncStatus == .on else { return }
         let changes = [
-            SyncLogic.change(forSong: updatedSong),
+            SyncLogic.change(forSong: song),
             SyncLogic.change(forEvent: event),
             SyncLogic.change(forDecision: decision),
             SyncLogic.change(forMasterComposition: composition)
