@@ -1,0 +1,67 @@
+name: macOS Progress Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/progress-build.yml'
+      - 'Package.swift'
+      - 'Sources/**'
+      - 'scripts/package-macos-app.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release app
+        run: ./scripts/package-macos-app.sh release
+
+      - name: Ad-hoc sign app
+        run: |
+          codesign --force --deep --sign - build/ArtistOS.app
+          codesign --verify --deep --strict --verbose=2 build/ArtistOS.app
+
+      - name: Package download
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent ArtistOS.app ArtistOS-mac.zip
+          shasum -a 256 ArtistOS-mac.zip > ArtistOS-mac.zip.sha256
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtistOS-macOS-progress
+          path: |
+            build/ArtistOS-mac.zip
+            build/ArtistOS-mac.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish stable progress release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Latest automatically published Artist OS macOS progress build.\n\nCommit: ${GITHUB_SHA}\n\nThis is a development preview. It is ad-hoc code signed for integrity, but it is not yet Apple Developer ID signed or notarized."
+
+          if gh release view progress >/dev/null 2>&1; then
+            gh release edit progress --title "Artist OS Progress Build" --prerelease --notes "$NOTES"
+          else
+            gh release create progress \
+              --title "Artist OS Progress Build" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --notes "$NOTES"
+          fi
+
+          gh release upload progress \
+            build/ArtistOS-mac.zip \
+            build/ArtistOS-mac.zip.sha256 \
+            --clobber
