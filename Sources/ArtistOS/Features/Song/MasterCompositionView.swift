@@ -172,7 +172,10 @@ struct MasterSectionRow: View {
             state.selectedAssetID = sourceAssetID
         }
         .dropDestination(for: String.self) { items, _ in
-            guard let raw = items.first, let assetID = UUID(uuidString: raw) else { return false }
+            guard let raw = items.first,
+                  let assetID = UUID(uuidString: raw),
+                  state.catalog.assets.contains(where: { $0.id == assetID && $0.songID == song.id })
+            else { return false }
             state.approveSectionDecision(sectionID: section.id, songID: song.id, winner: assetID)
             return true
         } isTargeted: { targeted in
