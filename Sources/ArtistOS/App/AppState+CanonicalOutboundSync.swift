@@ -6,10 +6,6 @@ extension AppState {
     /// Sends one logical canonical edit as a single batch and retries transient
     /// failures while the app remains open. Local catalog truth is already
     /// persisted before this method is called; sync failure must never roll it back.
-    ///
-    /// This is intentionally shared by approval, structure/state, and annotation
-    /// flows so Song / Event / Decision / Master Composition never get different
-    /// retry behavior merely because they originated from a different screen.
     @discardableResult
     func pushCanonicalChangesWithRetry(
         _ changes: [SyncLogic.JSONDict],
@@ -20,11 +16,8 @@ extension AppState {
         let delays = retryDelaysNanoseconds.isEmpty ? [UInt64(0)] : retryDelaysNanoseconds
         for (attempt, delay) in delays.enumerated() {
             if delay > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: delay)
-                } catch {
-                    return false
-                }
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return false }
             }
             guard !Task.isCancelled else { return false }
 
@@ -35,21 +28,59 @@ extension AppState {
             } catch {
                 syncLastError = error.localizedDescription
                 let hasAnotherAttempt = attempt < delays.count - 1
-                guard hasAnotherAttempt, isRetryableCanonicalSyncError(error) else {
-                    return false
-                }
+                guard hasAnotherAttempt, isRetryableCanonicalSyncError(error) else { return false }
             }
         }
         return false
     }
 
-    /// Fire-and-forget UI boundary for canonical edits. The retry loop itself is
-    /// async and testable; callers do not block the artist's editing interaction.
+    /// Persists canonical delivery intent before starting network work. The outbox
+    /// is coalesced by kind:id in GRDB, so a process crash cannot silently discard
+    /// the latest unsent Decision or Master Composition change.
     func scheduleCanonicalSync(_ changes: [SyncLogic.JSONDict]) {
         guard syncStatus == .on, !changes.isEmpty else { return }
+        do {
+            try store.enqueueCanonicalSyncChanges(changes)
+        } catch {
+            syncLastError = "Failed to persist sync outbox: \(error.localizedDescription)"
+            return
+        }
+        resumeCanonicalSyncOutbox()
+    }
+
+    /// Safe to call repeatedly. Duplicate sends are acceptable because the server
+    /// resolves the same kind:id by updatedAt; rows are removed only after an
+    /// acknowledged successful push.
+    func resumeCanonicalSyncOutbox() {
+        guard syncStatus == .on else { return }
         Task { [weak self] in
-            guard let self else { return }
-            _ = await self.pushCanonicalChangesWithRetry(changes)
+            await self?.drainCanonicalSyncOutbox()
+        }
+    }
+
+    func drainCanonicalSyncOutbox(
+        retryDelaysNanoseconds: [UInt64] = [0, 1_500_000_000, 5_000_000_000]
+    ) async {
+        guard syncStatus == .on else { return }
+        let pending: [CanonicalSyncOutboxItem]
+        do {
+            pending = try store.canonicalSyncOutbox()
+        } catch {
+            syncLastError = "Failed to read sync outbox: \(error.localizedDescription)"
+            return
+        }
+        guard !pending.isEmpty else { return }
+
+        let didPush = await pushCanonicalChangesWithRetry(
+            pending.map(\.change),
+            retryDelaysNanoseconds: retryDelaysNanoseconds
+        )
+        guard didPush else { return }
+
+        do {
+            try store.removeCanonicalSyncOutbox(keys: pending.map(\.key))
+        } catch {
+            syncLastError = "Cloud accepted changes, but local outbox cleanup failed: \(error.localizedDescription)"
         }
     }
 
