@@ -152,22 +152,13 @@ extension AppState {
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
 
-        guard syncStatus == .on else { return }
         let changes = [
             SyncLogic.change(forSong: song),
             SyncLogic.change(forEvent: event),
             SyncLogic.change(forDecision: decision),
             SyncLogic.change(forMasterComposition: composition)
         ]
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await self.sync.push(changes: changes)
-                self.syncLastError = nil
-            } catch {
-                self.syncLastError = error.localizedDescription
-            }
-        }
+        scheduleCanonicalSync(changes)
     }
 
     private func recomputeCanonicalMasterProgress(_ song: inout Song) {
