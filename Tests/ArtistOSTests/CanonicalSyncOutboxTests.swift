@@ -62,8 +62,32 @@ final class CanonicalSyncOutboxTests: XCTestCase {
         let pending = try store.canonicalSyncOutbox()
         XCTAssertEqual(pending.count, 1)
 
-        try store.removeCanonicalSyncOutbox(keys: pending.map(\.key))
+        try store.removeCanonicalSyncOutbox(pending)
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
+
+    func testAcknowledgingOlderPayloadDoesNotDeleteNewerQueuedEditForSameEntity() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let id = UUID().uuidString
+        let older = Date(timeIntervalSince1970: 100)
+        let newer = Date(timeIntervalSince1970: 200)
+
+        try store.enqueueCanonicalSyncChanges([
+            SyncLogic.change(kindRaw: SyncLogic.masterCompositionKind, id: id, updatedAt: older,
+                             data: ["id": id, "note": "older in flight"])
+        ])
+        let inFlight = try store.canonicalSyncOutbox()
+
+        try store.enqueueCanonicalSyncChanges([
+            SyncLogic.change(kindRaw: SyncLogic.masterCompositionKind, id: id, updatedAt: newer,
+                             data: ["id": id, "note": "newer queued"])
+        ])
+        try store.removeCanonicalSyncOutbox(inFlight)
+
+        let remaining = try store.canonicalSyncOutbox()
+        XCTAssertEqual(remaining.count, 1)
+        let data = remaining[0].change["data"] as? SyncLogic.JSONDict
+        XCTAssertEqual(data?["note"] as? String, "newer queued")
     }
 
     func testOutboxRejectsMalformedChangeInsteadOfSilentlyDroppingIt() throws {
