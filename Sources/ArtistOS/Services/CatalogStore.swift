@@ -3,6 +3,30 @@ import ArtistOSCore
 import GRDB
 import os
 
+struct CanonicalSyncOutboxItem {
+    let key: String
+    let payload: Data
+    let change: SyncLogic.JSONDict
+}
+
+enum CanonicalSyncOutboxError: LocalizedError {
+    case missingKind
+    case missingEntityID
+    case invalidUpdatedAt
+    case invalidJSONObject
+    case invalidStoredPayload
+
+    var errorDescription: String? {
+        switch self {
+        case .missingKind: return "Canonical sync change is missing a string kind."
+        case .missingEntityID: return "Canonical sync change is missing a string id."
+        case .invalidUpdatedAt: return "Canonical sync change is missing a valid numeric updatedAt."
+        case .invalidJSONObject: return "Canonical sync change cannot be serialized as JSON."
+        case .invalidStoredPayload: return "Canonical sync outbox contains an invalid stored payload."
+        }
+    }
+}
+
 /// Write-through persistence layer. The in-memory `ArtistCatalog` remains the
 /// UI's source of truth; every mutation is mirrored to SQLite through this store.
 final class CatalogStore {
@@ -13,8 +37,6 @@ final class CatalogStore {
         self.database = database
     }
 
-    /// Opens the shared on-disk database, falling back to in-memory if the
-    /// disk store cannot be created (never crashes the app on launch).
     static func makeDefault() -> CatalogStore {
         do {
             return CatalogStore(database: try AppDatabase.shared())
@@ -24,8 +46,6 @@ final class CatalogStore {
             return CatalogStore(database: try! AppDatabase.inMemory())
         }
     }
-
-    // MARK: - Load
 
     var isEmpty: Bool {
         (try? database.dbQueue.read { db -> Bool in
@@ -44,24 +64,16 @@ final class CatalogStore {
                 let eventRecords = try EventRecord.fetchAll(db)
                 let decisionRecords = try DecisionRecord.order(Column("timestamp")).fetchAll(db)
                 let compositionRecords = try MasterCompositionRecord.fetchAll(db)
-                let compositionSectionRecords = try MasterCompositionSectionRecord
-                    .order(Column("position"))
-                    .fetchAll(db)
-                let selectionRecords = try MasterSelectionRecord
-                    .order(Column("selectedAt"), Column("kind"), Column("id"))
-                    .fetchAll(db)
+                let compositionSectionRecords = try MasterCompositionSectionRecord.order(Column("position")).fetchAll(db)
+                let selectionRecords = try MasterSelectionRecord.order(Column("selectedAt"), Column("kind"), Column("id")).fetchAll(db)
 
                 var sectionsBySong: [UUID: [MasterSection]] = [:]
-                for record in sectionRecords {
-                    sectionsBySong[record.songID, default: []].append(record.toDomain())
-                }
-
+                for record in sectionRecords { sectionsBySong[record.songID, default: []].append(record.toDomain()) }
                 var selectionsBySection: [UUID: [MasterSelection]] = [:]
                 for record in selectionRecords {
                     guard let selection = record.toDomain() else { continue }
                     selectionsBySection[record.sectionID, default: []].append(selection)
                 }
-
                 var compositionSectionsByComposition: [UUID: [MasterCompositionSection]] = [:]
                 for record in compositionSectionRecords {
                     compositionSectionsByComposition[record.compositionID, default: []].append(
@@ -73,7 +85,6 @@ final class CatalogStore {
                 let masterCompositions = compositionRecords.map {
                     $0.toDomain(sections: compositionSectionsByComposition[$0.id] ?? [])
                 }
-
                 return ArtistCatalog(
                     artistName: artistName,
                     songs: songs,
@@ -85,74 +96,35 @@ final class CatalogStore {
             }
         } catch {
             logger.error("Failed to load catalog: \(error.localizedDescription)")
-            return ArtistCatalog(
-                artistName: artistName,
-                songs: [],
-                assets: [],
-                events: [],
-                decisions: [],
-                masterCompositions: []
-            )
+            return ArtistCatalog(artistName: artistName, songs: [], assets: [], events: [], decisions: [], masterCompositions: [])
         }
     }
-
-    // MARK: - Write
 
     func upsert(song: Song) throws {
-        try database.dbQueue.write { db in
-            try saveSong(song, in: db)
-        }
+        try database.dbQueue.write { db in try saveSong(song, in: db) }
     }
 
-    /// Persists the canonical composition as one atomic replacement. Existing
-    /// legacy Song.sections are deliberately untouched during migration.
     func upsert(masterComposition: MasterComposition) throws {
-        try database.dbQueue.write { db in
-            try replaceMasterComposition(masterComposition, in: db)
-        }
+        try database.dbQueue.write { db in try replaceMasterComposition(masterComposition, in: db) }
     }
 
-    /// Section notes are annotations, not Creative Decisions. During migration
-    /// the canonical composition and legacy Song mirror still need to agree, so
-    /// persist those two representations in one transaction without inventing
-    /// an Event or Decision for ordinary note editing.
-    func commitMasterAnnotation(
-        song: Song,
-        masterComposition: MasterComposition
-    ) throws {
+    func commitMasterAnnotation(song: Song, masterComposition: MasterComposition) throws {
         try database.dbQueue.write { db in
             try saveSong(song, in: db)
             try replaceMasterComposition(masterComposition, in: db)
         }
     }
 
-    /// One explicit artist approval changes four views of the same truth:
-    /// legacy Song state (during migration), factual Events, the Decision that
-    /// explains intent, and canonical Master Composition. They either all land
-    /// in SQLite or none of them do.
-    func commitApproval(
-        song: Song,
-        events: [CreativeEvent],
-        decision: CreativeDecision,
-        masterComposition: MasterComposition
-    ) throws {
+    func commitApproval(song: Song, events: [CreativeEvent], decision: CreativeDecision, masterComposition: MasterComposition) throws {
         try database.dbQueue.write { db in
             try saveSong(song, in: db)
-            for event in events {
-                try EventRecord(event).save(db)
-            }
+            for event in events { try EventRecord(event).save(db) }
             try DecisionRecord(decision).save(db)
             try replaceMasterComposition(masterComposition, in: db)
         }
     }
 
-    /// Persists one accepted remote canonical batch in a single GRDB transaction.
-    /// The candidate catalog is already resolved through CanonicalSync, so each
-    /// non-tombstone write copies the exact winning entity into SQLite.
-    func persistCanonicalSync(
-        _ applied: [CanonicalSync.AppliedChange],
-        catalog: ArtistCatalog
-    ) throws {
+    func persistCanonicalSync(_ applied: [CanonicalSync.AppliedChange], catalog: ArtistCatalog) throws {
         try database.dbQueue.write { db in
             for change in applied {
                 switch change.kind {
@@ -163,35 +135,84 @@ final class CatalogStore {
                     } else if let song = catalog.songs.first(where: { $0.id == change.id }) {
                         try saveSong(song, in: db)
                     }
-
                 case .asset:
-                    if change.deleted {
-                        try AssetRecord.filter(Column("id") == change.id).deleteAll(db)
-                    } else if let asset = catalog.assets.first(where: { $0.id == change.id }) {
-                        try AssetRecord(asset).save(db)
-                    }
-
+                    if change.deleted { try AssetRecord.filter(Column("id") == change.id).deleteAll(db) }
+                    else if let asset = catalog.assets.first(where: { $0.id == change.id }) { try AssetRecord(asset).save(db) }
                 case .event:
-                    if change.deleted {
-                        try EventRecord.filter(Column("id") == change.id).deleteAll(db)
-                    } else if let event = catalog.events.first(where: { $0.id == change.id }) {
-                        try EventRecord(event).save(db)
-                    }
-
+                    if change.deleted { try EventRecord.filter(Column("id") == change.id).deleteAll(db) }
+                    else if let event = catalog.events.first(where: { $0.id == change.id }) { try EventRecord(event).save(db) }
                 case .decision:
-                    if change.deleted {
-                        try DecisionRecord.filter(Column("id") == change.id).deleteAll(db)
-                    } else if let decision = catalog.decisions.first(where: { $0.id == change.id }) {
-                        try DecisionRecord(decision).save(db)
-                    }
-
+                    if change.deleted { try DecisionRecord.filter(Column("id") == change.id).deleteAll(db) }
+                    else if let decision = catalog.decisions.first(where: { $0.id == change.id }) { try DecisionRecord(decision).save(db) }
                 case .masterComposition:
-                    if change.deleted {
-                        try MasterCompositionRecord.filter(Column("id") == change.id).deleteAll(db)
-                    } else if let composition = catalog.masterCompositions.first(where: { $0.id == change.id }) {
-                        try replaceMasterComposition(composition, in: db)
-                    }
+                    if change.deleted { try MasterCompositionRecord.filter(Column("id") == change.id).deleteAll(db) }
+                    else if let composition = catalog.masterCompositions.first(where: { $0.id == change.id }) { try replaceMasterComposition(composition, in: db) }
                 }
+            }
+        }
+    }
+
+    // MARK: - Durable canonical sync outbox
+
+    func enqueueCanonicalSyncChanges(_ changes: [SyncLogic.JSONDict]) throws {
+        try database.dbQueue.write { db in
+            for change in changes {
+                guard let kind = change["kind"] as? String, !kind.isEmpty else {
+                    throw CanonicalSyncOutboxError.missingKind
+                }
+                guard let entityID = change["id"] as? String, !entityID.isEmpty else {
+                    throw CanonicalSyncOutboxError.missingEntityID
+                }
+                guard let updatedAtNumber = change["updatedAt"] as? NSNumber,
+                      updatedAtNumber.doubleValue.isFinite else {
+                    throw CanonicalSyncOutboxError.invalidUpdatedAt
+                }
+                guard JSONSerialization.isValidJSONObject(change) else {
+                    throw CanonicalSyncOutboxError.invalidJSONObject
+                }
+
+                let updatedAt = updatedAtNumber.doubleValue
+                let payload = try JSONSerialization.data(withJSONObject: change)
+                let key = "\(kind):\(entityID)"
+                try db.execute(
+                    sql: """
+                    INSERT INTO canonicalSyncOutbox (key, kind, entityID, updatedAt, payload)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      kind = excluded.kind,
+                      entityID = excluded.entityID,
+                      updatedAt = excluded.updatedAt,
+                      payload = excluded.payload
+                    WHERE excluded.updatedAt >= canonicalSyncOutbox.updatedAt
+                    """,
+                    arguments: [key, kind, entityID, updatedAt, payload]
+                )
+            }
+        }
+    }
+
+    func canonicalSyncOutbox() throws -> [CanonicalSyncOutboxItem] {
+        try database.dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT key, payload FROM canonicalSyncOutbox ORDER BY updatedAt, key")
+            return try rows.map { row in
+                let key: String = row["key"]
+                let payload: Data = row["payload"]
+                guard let change = try JSONSerialization.jsonObject(with: payload) as? SyncLogic.JSONDict else {
+                    throw CanonicalSyncOutboxError.invalidStoredPayload
+                }
+                return CanonicalSyncOutboxItem(key: key, payload: payload, change: change)
+            }
+        }
+    }
+
+    func removeCanonicalSyncOutbox(_ acknowledged: [CanonicalSyncOutboxItem]) throws {
+        guard !acknowledged.isEmpty else { return }
+        try database.dbQueue.write { db in
+            for item in acknowledged {
+                try db.execute(
+                    sql: "DELETE FROM canonicalSyncOutbox WHERE key = ? AND payload = ?",
+                    arguments: [item.key, item.payload]
+                )
             }
         }
     }
@@ -199,26 +220,15 @@ final class CatalogStore {
     private func saveSong(_ song: Song, in db: Database) throws {
         try SongRecord(song).save(db)
         try SectionRecord.filter(Column("songID") == song.id).deleteAll(db)
-        for (index, section) in song.sections.enumerated() {
-            try SectionRecord(section, songID: song.id, position: index).save(db)
-        }
+        for (index, section) in song.sections.enumerated() { try SectionRecord(section, songID: song.id, position: index).save(db) }
     }
 
     private func replaceMasterComposition(_ masterComposition: MasterComposition, in db: Database) throws {
-        try MasterCompositionRecord
-            .filter(Column("songID") == masterComposition.songID)
-            .deleteAll(db)
+        try MasterCompositionRecord.filter(Column("songID") == masterComposition.songID).deleteAll(db)
         try MasterCompositionRecord(masterComposition).save(db)
-
         for (position, section) in masterComposition.sections.enumerated() {
-            try MasterCompositionSectionRecord(
-                section,
-                compositionID: masterComposition.id,
-                position: position
-            ).save(db)
-            for selection in section.selections {
-                try MasterSelectionRecord(selection, sectionID: section.id).save(db)
-            }
+            try MasterCompositionSectionRecord(section, compositionID: masterComposition.id, position: position).save(db)
+            for selection in section.selections { try MasterSelectionRecord(selection, sectionID: section.id).save(db) }
         }
     }
 
@@ -229,56 +239,17 @@ final class CatalogStore {
         }
     }
 
-    func insert(asset: Asset) throws {
-        try database.dbQueue.write { db in
-            try AssetRecord(asset).save(db)
-        }
-    }
+    func insert(asset: Asset) throws { try database.dbQueue.write { db in try AssetRecord(asset).save(db) } }
+    func append(event: CreativeEvent) throws { try database.dbQueue.write { db in try EventRecord(event).save(db) } }
+    func append(decision: CreativeDecision) throws { try database.dbQueue.write { db in try DecisionRecord(decision).save(db) } }
 
-    func append(event: CreativeEvent) throws {
-        try database.dbQueue.write { db in
-            try EventRecord(event).save(db)
-        }
-    }
-
-    func append(decision: CreativeDecision) throws {
-        try database.dbQueue.write { db in
-            try DecisionRecord(decision).save(db)
-        }
-    }
-
-    // MARK: - Canonical sync deletion primitives
-
-    func delete(assetID: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try AssetRecord.filter(Column("id") == assetID).deleteAll(db)
-        }
-    }
-
-    func delete(eventID: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try EventRecord.filter(Column("id") == eventID).deleteAll(db)
-        }
-    }
-
-    func delete(decisionID: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try DecisionRecord.filter(Column("id") == decisionID).deleteAll(db)
-        }
-    }
-
-    func delete(masterCompositionID: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try MasterCompositionRecord.filter(Column("id") == masterCompositionID).deleteAll(db)
-        }
-    }
-
-    // MARK: - Watched folders
+    func delete(assetID: UUID) throws { _ = try database.dbQueue.write { db in try AssetRecord.filter(Column("id") == assetID).deleteAll(db) } }
+    func delete(eventID: UUID) throws { _ = try database.dbQueue.write { db in try EventRecord.filter(Column("id") == eventID).deleteAll(db) } }
+    func delete(decisionID: UUID) throws { _ = try database.dbQueue.write { db in try DecisionRecord.filter(Column("id") == decisionID).deleteAll(db) } }
+    func delete(masterCompositionID: UUID) throws { _ = try database.dbQueue.write { db in try MasterCompositionRecord.filter(Column("id") == masterCompositionID).deleteAll(db) } }
 
     func watchedFolders() -> [WatchedFolder] {
-        (try? database.dbQueue.read { db in
-            try WatchedFolderRecord.order(Column("addedAt")).fetchAll(db).map { $0.toDomain() }
-        }) ?? []
+        (try? database.dbQueue.read { db in try WatchedFolderRecord.order(Column("addedAt")).fetchAll(db).map { $0.toDomain() } }) ?? []
     }
 
     func save(watchedFolder: WatchedFolder) throws {
@@ -289,29 +260,17 @@ final class CatalogStore {
     }
 
     func deleteWatchedFolder(id: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try WatchedFolderRecord.filter(Column("id") == id).deleteAll(db)
-        }
+        _ = try database.dbQueue.write { db in try WatchedFolderRecord.filter(Column("id") == id).deleteAll(db) }
     }
 
     func seed(_ catalog: ArtistCatalog) {
         do {
             try database.dbQueue.write { db in
-                for song in catalog.songs {
-                    try saveSong(song, in: db)
-                }
-                for asset in catalog.assets {
-                    try AssetRecord(asset).save(db)
-                }
-                for event in catalog.events {
-                    try EventRecord(event).save(db)
-                }
-                for decision in catalog.decisions {
-                    try DecisionRecord(decision).save(db)
-                }
-                for composition in catalog.masterCompositions {
-                    try replaceMasterComposition(composition, in: db)
-                }
+                for song in catalog.songs { try saveSong(song, in: db) }
+                for asset in catalog.assets { try AssetRecord(asset).save(db) }
+                for event in catalog.events { try EventRecord(event).save(db) }
+                for decision in catalog.decisions { try DecisionRecord(decision).save(db) }
+                for composition in catalog.masterCompositions { try replaceMasterComposition(composition, in: db) }
             }
         } catch {
             logger.error("Failed to seed catalog: \(error.localizedDescription)")

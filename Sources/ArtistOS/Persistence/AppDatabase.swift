@@ -197,6 +197,20 @@ final class AppDatabase {
             )
         }
 
+        // Canonical cloud delivery must survive process death. The outbox stores
+        // the exact wire change, coalesced by entity identity. A newer local write
+        // replaces an older unsent write for the same kind:id while preserving
+        // tombstones and all five canonical entity kinds.
+        migrator.registerMigration("v9") { db in
+            try db.create(table: "canonicalSyncOutbox") { t in
+                t.column("key", .text).primaryKey()
+                t.column("kind", .text).notNull().indexed()
+                t.column("entityID", .text).notNull()
+                t.column("updatedAt", .double).notNull()
+                t.column("payload", .blob).notNull()
+            }
+        }
+
         return migrator
     }
 }
