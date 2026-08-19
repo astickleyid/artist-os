@@ -22,7 +22,6 @@ extension AppState {
               let winnerAsset = catalog.assets.first(where: { $0.id == winner && $0.songID == songID })
         else { return }
 
-        let oldSection = catalog.songs[songIndex].sections[sectionIndex]
         var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         guard let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
