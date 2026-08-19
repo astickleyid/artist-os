@@ -48,6 +48,7 @@ extension AppState {
         catalog.songs[songIndex] = updatedSong
         catalog.setMasterComposition(composition)
 
+        guard syncStatus == .on else { return }
         let changes = [
             SyncLogic.change(forSong: updatedSong),
             SyncLogic.change(forMasterComposition: composition)
