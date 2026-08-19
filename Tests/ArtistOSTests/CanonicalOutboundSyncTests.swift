@@ -33,7 +33,8 @@ final class CanonicalOutboundSyncTests: XCTestCase {
 
         XCTAssertTrue(success)
         XCTAssertNil(state.syncLastError)
-        XCTAssertEqual(await fake.recorded.count, 3, "enable + failed push + successful retry")
+        let requestCount = await fake.recorded.count
+        XCTAssertEqual(requestCount, 3, "enable + failed push + successful retry")
         let body = await fake.lastBodyJSON()
         let changes = body?["changes"] as? [[String: Any]] ?? []
         XCTAssertEqual(changes.first?["kind"] as? String, SyncLogic.decisionKind)
@@ -62,7 +63,8 @@ final class CanonicalOutboundSyncTests: XCTestCase {
 
         XCTAssertFalse(success)
         XCTAssertNotNil(state.syncLastError)
-        XCTAssertEqual(await fake.recorded.count, 3, "enable + two failed attempts")
+        let requestCount = await fake.recorded.count
+        XCTAssertEqual(requestCount, 3, "enable + two failed attempts")
     }
 
     func testCanonicalPushDoesNothingWhileSyncIsOff() async throws {
@@ -84,6 +86,7 @@ final class CanonicalOutboundSyncTests: XCTestCase {
         )
 
         XCTAssertFalse(success)
-        XCTAssertEqual(await fake.recorded.count, 0)
+        let requestCount = await fake.recorded.count
+        XCTAssertEqual(requestCount, 0)
     }
 }
