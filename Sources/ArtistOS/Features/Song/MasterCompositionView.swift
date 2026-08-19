@@ -45,8 +45,7 @@ struct MasterCompositionView: View {
                 MasterSectionRow(
                     index: index + 1,
                     song: song,
-                    section: section,
-                    legacySection: song.sections.first(where: { $0.id == section.id })
+                    section: section
                 )
                 .aosHoverable(cornerRadius: 17)
             }
@@ -73,7 +72,6 @@ struct MasterSectionRow: View {
     let index: Int
     let song: Song
     let section: MasterCompositionSection
-    let legacySection: MasterSection?
 
     @State private var isEditingNote = false
     @State private var noteDraft = ""
@@ -81,7 +79,7 @@ struct MasterSectionRow: View {
     @State private var isComparing = false
 
     private var sourceAssetID: UUID? {
-        section.selection(.sourceAsset)?.referenceID ?? legacySection?.assetID
+        section.selection(.sourceAsset)?.referenceID
     }
 
     private var asset: Asset? { state.asset(id: sourceAssetID) }
