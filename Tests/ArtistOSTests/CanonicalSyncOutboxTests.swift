@@ -1,5 +1,6 @@
 import XCTest
 import ArtistOSCore
+import GRDB
 @testable import ArtistOS
 
 final class CanonicalSyncOutboxTests: XCTestCase {
@@ -63,5 +64,55 @@ final class CanonicalSyncOutboxTests: XCTestCase {
 
         try store.removeCanonicalSyncOutbox(keys: pending.map(\.key))
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
+
+    func testOutboxRejectsMalformedChangeInsteadOfSilentlyDroppingIt() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let malformed: SyncLogic.JSONDict = [
+            "kind": SyncLogic.decisionKind,
+            "id": UUID().uuidString,
+            "data": ["reason": "missing timestamp"]
+        ]
+
+        XCTAssertThrowsError(try store.enqueueCanonicalSyncChanges([malformed])) { error in
+            guard case CanonicalSyncOutboxError.invalidUpdatedAt = error else {
+                return XCTFail("Expected invalidUpdatedAt, got \(error)")
+            }
+        }
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
+
+    func testOutboxRejectsNonSerializableChangeInsteadOfSilentlyDroppingIt() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let malformed: SyncLogic.JSONDict = [
+            "kind": SyncLogic.decisionKind,
+            "id": UUID().uuidString,
+            "updatedAt": Date().timeIntervalSince1970 * 1000,
+            "data": ["invalid": Date()]
+        ]
+
+        XCTAssertThrowsError(try store.enqueueCanonicalSyncChanges([malformed])) { error in
+            guard case CanonicalSyncOutboxError.invalidJSONObject = error else {
+                return XCTFail("Expected invalidJSONObject, got \(error)")
+            }
+        }
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
+
+    func testOutboxReadFailsClosedOnCorruptStoredPayload() throws {
+        let database = try AppDatabase.inMemory()
+        let store = CatalogStore(database: database)
+        try database.dbQueue.write { db in
+            try db.execute(
+                sql: "INSERT INTO canonicalSyncOutbox (key, kind, entityID, updatedAt, payload) VALUES (?, ?, ?, ?, ?)",
+                arguments: ["decision:broken", SyncLogic.decisionKind, "broken", 1.0, Data("[]".utf8)]
+            )
+        }
+
+        XCTAssertThrowsError(try store.canonicalSyncOutbox()) { error in
+            guard case CanonicalSyncOutboxError.invalidStoredPayload = error else {
+                return XCTFail("Expected invalidStoredPayload, got \(error)")
+            }
+        }
     }
 }
