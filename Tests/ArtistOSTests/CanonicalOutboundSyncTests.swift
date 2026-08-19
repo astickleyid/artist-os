@@ -67,6 +67,35 @@ final class CanonicalOutboundSyncTests: XCTestCase {
         XCTAssertEqual(requestCount, 3, "enable + two failed attempts")
     }
 
+    func testCanonicalPushDoesNotRetryNonTransientClientError() async throws {
+        let fake = FakeHTTPClient(script: [
+            .init(json: ["accountId": "acc1", "token": "tok1"], status: 201),
+            .init(json: ["error": "unauthorized"], status: 401),
+            .init(json: ["applied": 1, "skipped": 0, "seq": 1])
+        ])
+        let state = AppState(
+            store: CatalogStore(database: try AppDatabase.inMemory()),
+            seedIfNeeded: false,
+            enableWatching: false,
+            sync: SyncService(client: fake, defaults: freshDefaults())
+        )
+        await state.enableSync()
+
+        let decision = CreativeDecision(
+            id: UUID(), songID: UUID(), timestamp: Date(), target: .song,
+            action: .approved, selectedAssetID: nil, source: .artist
+        )
+        let success = await state.pushCanonicalChangesWithRetry(
+            [SyncLogic.change(forDecision: decision)],
+            retryDelaysNanoseconds: [0, 0, 0]
+        )
+
+        XCTAssertFalse(success)
+        XCTAssertNotNil(state.syncLastError)
+        let requestCount = await fake.recorded.count
+        XCTAssertEqual(requestCount, 2, "enable + one 401; non-transient failures must not be retried")
+    }
+
     func testCanonicalPushDoesNothingWhileSyncIsOff() async throws {
         let fake = FakeHTTPClient(script: [])
         let state = AppState(
