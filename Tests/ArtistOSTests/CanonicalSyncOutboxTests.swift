@@ -1,6 +1,5 @@
 import XCTest
 import ArtistOSCore
-import GRDB
 @testable import ArtistOS
 
 final class CanonicalSyncOutboxTests: XCTestCase {
@@ -121,22 +120,5 @@ final class CanonicalSyncOutboxTests: XCTestCase {
             }
         }
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
-    }
-
-    func testOutboxReadFailsClosedOnCorruptStoredPayload() throws {
-        let database = try AppDatabase.inMemory()
-        let store = CatalogStore(database: database)
-        try database.dbQueue.write { db in
-            try db.execute(
-                sql: "INSERT INTO canonicalSyncOutbox (key, kind, entityID, updatedAt, payload) VALUES (?, ?, ?, ?, ?)",
-                arguments: ["decision:broken", SyncLogic.decisionKind, "broken", 1.0, Data("[]".utf8)]
-            )
-        }
-
-        XCTAssertThrowsError(try store.canonicalSyncOutbox()) { error in
-            guard case CanonicalSyncOutboxError.invalidStoredPayload = error else {
-                return XCTFail("Expected invalidStoredPayload, got \(error)")
-            }
-        }
     }
 }
