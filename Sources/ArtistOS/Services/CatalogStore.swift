@@ -8,6 +8,24 @@ struct CanonicalSyncOutboxItem {
     let change: SyncLogic.JSONDict
 }
 
+enum CanonicalSyncOutboxError: LocalizedError {
+    case missingKind
+    case missingEntityID
+    case invalidUpdatedAt
+    case invalidJSONObject
+    case invalidStoredPayload
+
+    var errorDescription: String? {
+        switch self {
+        case .missingKind: return "Canonical sync change is missing a string kind."
+        case .missingEntityID: return "Canonical sync change is missing a string id."
+        case .invalidUpdatedAt: return "Canonical sync change is missing a valid numeric updatedAt."
+        case .invalidJSONObject: return "Canonical sync change cannot be serialized as JSON."
+        case .invalidStoredPayload: return "Canonical sync outbox contains an invalid stored payload."
+        }
+    }
+}
+
 /// Write-through persistence layer. The in-memory `ArtistCatalog` remains the
 /// UI's source of truth; every mutation is mirrored to SQLite through this store.
 final class CatalogStore {
@@ -138,13 +156,21 @@ final class CatalogStore {
     func enqueueCanonicalSyncChanges(_ changes: [SyncLogic.JSONDict]) throws {
         try database.dbQueue.write { db in
             for change in changes {
-                guard let kind = change["kind"] as? String,
-                      let entityID = change["id"] as? String,
-                      JSONSerialization.isValidJSONObject(change)
-                else { continue }
-                let updatedAt = (change["updatedAt"] as? NSNumber)?.doubleValue
-                    ?? (change["updatedAt"] as? Double)
-                    ?? 0
+                guard let kind = change["kind"] as? String, !kind.isEmpty else {
+                    throw CanonicalSyncOutboxError.missingKind
+                }
+                guard let entityID = change["id"] as? String, !entityID.isEmpty else {
+                    throw CanonicalSyncOutboxError.missingEntityID
+                }
+                guard let updatedAtNumber = change["updatedAt"] as? NSNumber,
+                      updatedAtNumber.doubleValue.isFinite else {
+                    throw CanonicalSyncOutboxError.invalidUpdatedAt
+                }
+                guard JSONSerialization.isValidJSONObject(change) else {
+                    throw CanonicalSyncOutboxError.invalidJSONObject
+                }
+
+                let updatedAt = updatedAtNumber.doubleValue
                 let payload = try JSONSerialization.data(withJSONObject: change)
                 let key = "\(kind):\(entityID)"
                 try db.execute(
@@ -167,10 +193,12 @@ final class CatalogStore {
     func canonicalSyncOutbox() throws -> [CanonicalSyncOutboxItem] {
         try database.dbQueue.read { db in
             let rows = try Row.fetchAll(db, sql: "SELECT key, payload FROM canonicalSyncOutbox ORDER BY updatedAt, key")
-            return try rows.compactMap { row in
+            return try rows.map { row in
                 let key: String = row["key"]
                 let payload: Data = row["payload"]
-                guard let change = try JSONSerialization.jsonObject(with: payload) as? SyncLogic.JSONDict else { return nil }
+                guard let change = try JSONSerialization.jsonObject(with: payload) as? SyncLogic.JSONDict else {
+                    throw CanonicalSyncOutboxError.invalidStoredPayload
+                }
                 return CanonicalSyncOutboxItem(key: key, change: change)
             }
         }
