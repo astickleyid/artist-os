@@ -68,6 +68,107 @@ final class MasterCompositionEditingTests: XCTestCase {
         XCTAssertEqual(reloaded.events.last?.id, event.id)
     }
 
+    func testClearingCanonicalSourceIgnoresStaleLegacySourceInHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Clear Divergence")
+
+        let song = try XCTUnwrap(state.catalog.songs.first)
+        let sectionID = song.sections[0].id
+        let canonicalAsset = Asset(
+            id: UUID(),
+            title: "Canonical Lead",
+            originalFilename: "canonical.wav",
+            role: .leadVocal,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: song.id
+        )
+        let staleLegacyAsset = Asset(
+            id: UUID(),
+            title: "Stale Legacy Lead",
+            originalFilename: "legacy.wav",
+            role: .leadVocal,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: song.id
+        )
+        for asset in [canonicalAsset, staleLegacyAsset] {
+            state.catalog.assets.append(asset)
+            try store.insert(asset: asset)
+        }
+
+        state.approveSectionDecision(
+            sectionID: sectionID,
+            songID: song.id,
+            winner: canonicalAsset.id
+        )
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == song.id })
+        let sectionIndex = try XCTUnwrap(state.catalog.songs[songIndex].sections.firstIndex { $0.id == sectionID })
+        state.catalog.songs[songIndex].sections[sectionIndex].assetID = staleLegacyAsset.id
+
+        state.clearCanonicalSectionSource(sectionID: sectionID, songID: song.id)
+
+        let event = try XCTUnwrap(state.catalog.events.last)
+        let decision = try XCTUnwrap(state.catalog.decisions.last)
+        XCTAssertEqual(event.beforeAssetID, canonicalAsset.id)
+        XCTAssertEqual(decision.rejectedAssetIDs, [canonicalAsset.id])
+        XCTAssertFalse(decision.rejectedAssetIDs.contains(staleLegacyAsset.id))
+    }
+
+    func testRemovingCanonicalSectionIgnoresStaleLegacySourceInHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Remove Divergence")
+
+        let song = try XCTUnwrap(state.catalog.songs.first)
+        let sectionID = song.sections[0].id
+        let canonicalAsset = Asset(
+            id: UUID(),
+            title: "Canonical Hook",
+            originalFilename: "hook-canonical.wav",
+            role: .hook,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: song.id
+        )
+        let staleLegacyAsset = Asset(
+            id: UUID(),
+            title: "Stale Hook",
+            originalFilename: "hook-stale.wav",
+            role: .hook,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: song.id
+        )
+        for asset in [canonicalAsset, staleLegacyAsset] {
+            state.catalog.assets.append(asset)
+            try store.insert(asset: asset)
+        }
+
+        state.approveSectionDecision(
+            sectionID: sectionID,
+            songID: song.id,
+            winner: canonicalAsset.id
+        )
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == song.id })
+        let sectionIndex = try XCTUnwrap(state.catalog.songs[songIndex].sections.firstIndex { $0.id == sectionID })
+        state.catalog.songs[songIndex].sections[sectionIndex].assetID = staleLegacyAsset.id
+
+        state.removeCanonicalSection(sectionID: sectionID, songID: song.id)
+
+        let event = try XCTUnwrap(state.catalog.events.last)
+        let decision = try XCTUnwrap(state.catalog.decisions.last)
+        XCTAssertEqual(event.beforeAssetID, canonicalAsset.id)
+        XCTAssertEqual(decision.rejectedAssetIDs, [canonicalAsset.id])
+        XCTAssertFalse(decision.rejectedAssetIDs.contains(staleLegacyAsset.id))
+        XCTAssertNil(state.catalog.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID })
+    }
+
     func testClearingEmptySourceDoesNotCreateHistory() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
