@@ -112,6 +112,20 @@ final class CatalogStore {
         }
     }
 
+    /// Section notes are annotations, not Creative Decisions. During migration
+    /// the canonical composition and legacy Song mirror still need to agree, so
+    /// persist those two representations in one transaction without inventing
+    /// an Event or Decision for ordinary note editing.
+    func commitMasterAnnotation(
+        song: Song,
+        masterComposition: MasterComposition
+    ) throws {
+        try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            try replaceMasterComposition(masterComposition, in: db)
+        }
+    }
+
     /// One explicit artist approval changes four views of the same truth:
     /// legacy Song state (during migration), factual Events, the Decision that
     /// explains intent, and canonical Master Composition. They either all land
