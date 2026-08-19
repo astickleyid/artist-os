@@ -18,7 +18,7 @@ extension AppState {
         guard syncStatus == .on, !changes.isEmpty else { return false }
 
         let delays = retryDelaysNanoseconds.isEmpty ? [UInt64(0)] : retryDelaysNanoseconds
-        for delay in delays {
+        for (attempt, delay) in delays.enumerated() {
             if delay > 0 {
                 do {
                     try await Task.sleep(nanoseconds: delay)
@@ -34,6 +34,10 @@ extension AppState {
                 return true
             } catch {
                 syncLastError = error.localizedDescription
+                let hasAnotherAttempt = attempt < delays.count - 1
+                guard hasAnotherAttempt, isRetryableCanonicalSyncError(error) else {
+                    return false
+                }
             }
         }
         return false
@@ -46,6 +50,17 @@ extension AppState {
         Task { [weak self] in
             guard let self else { return }
             _ = await self.pushCanonicalChangesWithRetry(changes)
+        }
+    }
+
+    private func isRetryableCanonicalSyncError(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        guard let syncError = error as? SyncError else { return false }
+        switch syncError {
+        case .server(let status, _):
+            return status == 408 || status == 429 || (500...599).contains(status)
+        case .invalidResponse, .malformedBody, .notEnabled:
+            return false
         }
     }
 }
