@@ -227,12 +227,22 @@ extension AppState {
         composition: MasterComposition,
         failureMessage: String
     ) {
+        let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
+            ? [
+                SyncLogic.change(forSong: song),
+                SyncLogic.change(forEvent: event),
+                SyncLogic.change(forDecision: decision),
+                SyncLogic.change(forMasterComposition: composition)
+            ]
+            : []
+
         do {
             try store.commitApproval(
                 song: song,
                 events: [event],
                 decision: decision,
-                masterComposition: composition
+                masterComposition: composition,
+                syncChanges: syncChanges
             )
         } catch {
             masterEditingLogger.error("\(failureMessage): \(error.localizedDescription)")
@@ -245,14 +255,9 @@ extension AppState {
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
 
-        guard syncStatus == .on else { return }
-        let changes = [
-            SyncLogic.change(forSong: song),
-            SyncLogic.change(forEvent: event),
-            SyncLogic.change(forDecision: decision),
-            SyncLogic.change(forMasterComposition: composition)
-        ]
-        scheduleCanonicalSync(changes)
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
     private func recomputeMasterProgress(_ song: inout Song) {
