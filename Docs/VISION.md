@@ -25,8 +25,8 @@ Versions are derived views over assets + creative history. They are not primary 
    requires a pinned master; a newer version than the pinned master reopens
    the question. Surfaced as a Decide inbox; resolved by A/B. ✅ web ✅ macOS
 3. **Audio intelligence** — BPM/key detection feeding stacks and later DNA. ✅ web ✅ macOS
-4. **Master Composition migration** — move from the legacy one-asset-per-section shape to layered source / processing / automation / comp selections without breaking existing catalogs. 🚧
-5. **Decision history integration** — first-class decisions persisted, synced, and surfaced in approval flows so events remain factual and intent remains separate. 🚧
+4. **Master Composition migration** — layered source / processing / automation / comp selections are persisted and the native Master workspace reads/writes the canonical model; legacy Song section fields remain only as compatibility mirrors pending final retirement tests. ✅
+5. **Decision history integration** — first-class Decisions are persisted, synced, and wired into approval/structure/state flows so Events remain factual and intent remains separate. ✅
 6. **Creative DNA** — cross-song patterns once enough trustworthy history accumulates. ⏳
 7. **Recap** — periodic creative journal generated from events + decisions. ⏳
 
@@ -46,9 +46,7 @@ Versions are derived views over assets + creative history. They are not primary 
 ## Sync (Cloudflare — live, metadata-first)
 Architecture per owner decision: one Worker (worker/src/index.js) in front of D1
 (metadata) + R2 (opt-in audio).
-- **Metadata-first**: songs, sections, events, version metadata, and pins sync
-  automatically and cheaply (KBs). First-class Decisions and Master Composition
-  must join this contract as their migrations land.
+- **Metadata-first**: Song, Asset, Creative Event, Creative Decision, and Master Composition metadata participate in the canonical native sync contract. Outbound canonical intent is persisted in a GRDB outbox before network delivery and survives relaunch; local domain mutation + outbox insertion still need to become one shared transaction on every mutation path.
 - **Audio stays local by default** until a person explicitly chooses to make an
   asset available everywhere — the Frame.io/Splice pattern.
 - **Auth**: no passwords. Creating an account issues a bearer token; a second
@@ -71,13 +69,13 @@ Architecture per owner decision: one Worker (worker/src/index.js) in front of D1
 - **Cloudflare sync**: active metadata transport with opt-in audio blobs. It is no longer a deferred architecture decision.
 
 ## Current architectural migration order
-1. Persist Creative Decisions independently from Creative Events.
-2. Establish layered Master Composition as the canonical core model.
-3. Persist Master Composition without destroying legacy catalogs.
-4. Wire Decisions into A/B, pin-master, and other approval flows.
-5. Add Decisions + Master Composition to sync contract and conflict handling.
-6. Migrate native macOS workspace to read/write the canonical model.
-7. Retire legacy `Song.sections[].assetID` only after migration tests prove existing catalogs are safe.
+1. Persist Creative Decisions independently from Creative Events. ✅
+2. Establish layered Master Composition as the canonical core model. ✅
+3. Persist Master Composition without destroying legacy catalogs. ✅
+4. Wire Decisions into A/B, pin-master, and other approval flows. ✅
+5. Add Decisions + Master Composition to sync contract and conflict handling. ✅
+6. Migrate native macOS workspace to read/write the canonical model. ✅
+7. Retire legacy `Song.sections[].assetID` only after migration tests prove existing catalogs are safe. 🚧
 
 ## Deferred by design
 Batch DSP variant generation · collaboration · predictive career modeling.
