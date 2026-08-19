@@ -11,10 +11,6 @@ final class CanonicalApprovalHistoryTests: XCTestCase {
 
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
         let sectionID = try XCTUnwrap(state.catalog.songs.first?.sections.first?.id)
-        let legacyWinner = Asset(
-            id: UUID(), title: "Legacy Winner", originalFilename: "legacy.wav", role: .leadVocal,
-            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
-        )
         let canonicalPrior = Asset(
             id: UUID(), title: "Canonical Prior", originalFilename: "canonical.wav", role: .leadVocal,
             createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
@@ -23,8 +19,7 @@ final class CanonicalApprovalHistoryTests: XCTestCase {
             id: UUID(), title: "New Winner", originalFilename: "winner.wav", role: .leadVocal,
             createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
         )
-        state.catalog.assets.append(contentsOf: [legacyWinner, canonicalPrior, newWinner])
-        try store.insert(asset: legacyWinner)
+        state.catalog.assets.append(contentsOf: [canonicalPrior, newWinner])
         try store.insert(asset: canonicalPrior)
         try store.insert(asset: newWinner)
 
