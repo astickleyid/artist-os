@@ -22,11 +22,17 @@ extension AppState {
               let winnerAsset = catalog.assets.first(where: { $0.id == winner && $0.songID == songID })
         else { return }
 
-        let oldSection = catalog.songs[songIndex].sections[sectionIndex]
-        guard oldSection.assetID != winner || oldSection.state != .locked else { return }
+        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
+            ?? MasterComposition.projected(from: catalog.songs[songIndex])
+        guard let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
+        else { return }
+
+        let canonicalSection = composition.sections[compositionSectionIndex]
+        let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID
+        guard oldSourceID != winner || canonicalSection.state != .locked else { return }
 
         let timestamp = Date()
-        let target = approvalTarget(forSectionName: oldSection.name)
+        let target = approvalTarget(forSectionName: canonicalSection.name)
         var updatedSong = catalog.songs[songIndex]
         updatedSong.sections[sectionIndex].assetID = winner
         updatedSong.sections[sectionIndex].state = .locked
@@ -35,29 +41,29 @@ extension AppState {
         updatedSong.updatedAt = timestamp
 
         var events: [CreativeEvent] = []
-        if oldSection.assetID != winner {
+        if oldSourceID != winner {
             events.append(CreativeEvent(
                 id: UUID(),
                 songID: songID,
                 timestamp: timestamp,
                 target: target,
                 operation: .sourceSelected,
-                beforeAssetID: oldSection.assetID,
+                beforeAssetID: oldSourceID,
                 afterAssetID: winner,
-                summary: "\(winnerAsset.title) selected as \(oldSection.name) source.",
+                summary: "\(winnerAsset.title) selected as \(canonicalSection.name) source.",
                 confidence: 1
             ))
         }
-        if oldSection.state != .locked {
+        if canonicalSection.state != .locked {
             events.append(CreativeEvent(
                 id: UUID(),
                 songID: songID,
                 timestamp: timestamp,
                 target: target,
                 operation: .approved,
-                beforeAssetID: oldSection.assetID,
+                beforeAssetID: oldSourceID,
                 afterAssetID: winner,
-                summary: "\(oldSection.name) moved from \(oldSection.state.rawValue) to Locked.",
+                summary: "\(canonicalSection.name) moved from \(canonicalSection.state.rawValue) to Locked.",
                 confidence: 1
             ))
         }
@@ -79,11 +85,6 @@ extension AppState {
             reason: reason,
             source: .artist
         )
-
-        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
-            ?? MasterComposition.projected(from: updatedSong)
-        guard let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
 
         composition.sections[compositionSectionIndex].setSelection(MasterSelection(
             kind: .sourceAsset,
