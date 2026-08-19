@@ -121,4 +121,51 @@ final class CanonicalSyncOutboxTests: XCTestCase {
         }
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
     }
+
+    func testMasterAnnotationCommitsDomainTruthAndOutboxTogether() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        var song = ImportService.makeSong(title: "Atomic annotation")
+        song.sections[0].note = "keep this take"
+        song.updatedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        var composition = MasterComposition.projected(from: song)
+        composition.sections[0].note = "keep this take"
+        composition.updatedAt = song.updatedAt
+        let changes = [
+            SyncLogic.change(forSong: song),
+            SyncLogic.change(forMasterComposition: composition)
+        ]
+
+        try store.commitMasterAnnotation(
+            song: song,
+            masterComposition: composition,
+            syncChanges: changes
+        )
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(loaded.songs.first?.sections.first?.note, "keep this take")
+        XCTAssertEqual(loaded.masterCompositions.first?.sections.first?.note, "keep this take")
+        XCTAssertEqual(try store.canonicalSyncOutbox().count, 2)
+    }
+
+    func testInvalidOutboxPayloadRollsBackCanonicalMutationTransaction() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let song = ImportService.makeSong(title: "Must rollback")
+        let composition = MasterComposition.projected(from: song)
+        let malformed: SyncLogic.JSONDict = [
+            "kind": SyncLogic.masterCompositionKind,
+            "id": composition.id.uuidString,
+            "data": ["reason": "missing timestamp"]
+        ]
+
+        XCTAssertThrowsError(try store.commitMasterAnnotation(
+            song: song,
+            masterComposition: composition,
+            syncChanges: [malformed]
+        ))
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertTrue(loaded.songs.isEmpty)
+        XCTAssertTrue(loaded.masterCompositions.isEmpty)
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
 }
