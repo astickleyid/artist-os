@@ -108,19 +108,31 @@ final class CatalogStore {
         try database.dbQueue.write { db in try replaceMasterComposition(masterComposition, in: db) }
     }
 
-    func commitMasterAnnotation(song: Song, masterComposition: MasterComposition) throws {
+    func commitMasterAnnotation(
+        song: Song,
+        masterComposition: MasterComposition,
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
         try database.dbQueue.write { db in
             try saveSong(song, in: db)
             try replaceMasterComposition(masterComposition, in: db)
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
         }
     }
 
-    func commitApproval(song: Song, events: [CreativeEvent], decision: CreativeDecision, masterComposition: MasterComposition) throws {
+    func commitApproval(
+        song: Song,
+        events: [CreativeEvent],
+        decision: CreativeDecision,
+        masterComposition: MasterComposition,
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
         try database.dbQueue.write { db in
             try saveSong(song, in: db)
             for event in events { try EventRecord(event).save(db) }
             try DecisionRecord(decision).save(db)
             try replaceMasterComposition(masterComposition, in: db)
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
         }
     }
 
@@ -156,38 +168,7 @@ final class CatalogStore {
 
     func enqueueCanonicalSyncChanges(_ changes: [SyncLogic.JSONDict]) throws {
         try database.dbQueue.write { db in
-            for change in changes {
-                guard let kind = change["kind"] as? String, !kind.isEmpty else {
-                    throw CanonicalSyncOutboxError.missingKind
-                }
-                guard let entityID = change["id"] as? String, !entityID.isEmpty else {
-                    throw CanonicalSyncOutboxError.missingEntityID
-                }
-                guard let updatedAtNumber = change["updatedAt"] as? NSNumber,
-                      updatedAtNumber.doubleValue.isFinite else {
-                    throw CanonicalSyncOutboxError.invalidUpdatedAt
-                }
-                guard JSONSerialization.isValidJSONObject(change) else {
-                    throw CanonicalSyncOutboxError.invalidJSONObject
-                }
-
-                let updatedAt = updatedAtNumber.doubleValue
-                let payload = try JSONSerialization.data(withJSONObject: change)
-                let key = "\(kind):\(entityID)"
-                try db.execute(
-                    sql: """
-                    INSERT INTO canonicalSyncOutbox (key, kind, entityID, updatedAt, payload)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET
-                      kind = excluded.kind,
-                      entityID = excluded.entityID,
-                      updatedAt = excluded.updatedAt,
-                      payload = excluded.payload
-                    WHERE excluded.updatedAt >= canonicalSyncOutbox.updatedAt
-                    """,
-                    arguments: [key, kind, entityID, updatedAt, payload]
-                )
-            }
+            try enqueueCanonicalSyncChanges(changes, in: db)
         }
     }
 
@@ -214,6 +195,41 @@ final class CatalogStore {
                     arguments: [item.key, item.payload]
                 )
             }
+        }
+    }
+
+    private func enqueueCanonicalSyncChanges(_ changes: [SyncLogic.JSONDict], in db: Database) throws {
+        for change in changes {
+            guard let kind = change["kind"] as? String, !kind.isEmpty else {
+                throw CanonicalSyncOutboxError.missingKind
+            }
+            guard let entityID = change["id"] as? String, !entityID.isEmpty else {
+                throw CanonicalSyncOutboxError.missingEntityID
+            }
+            guard let updatedAtNumber = change["updatedAt"] as? NSNumber,
+                  updatedAtNumber.doubleValue.isFinite else {
+                throw CanonicalSyncOutboxError.invalidUpdatedAt
+            }
+            guard JSONSerialization.isValidJSONObject(change) else {
+                throw CanonicalSyncOutboxError.invalidJSONObject
+            }
+
+            let updatedAt = updatedAtNumber.doubleValue
+            let payload = try JSONSerialization.data(withJSONObject: change)
+            let key = "\(kind):\(entityID)"
+            try db.execute(
+                sql: """
+                INSERT INTO canonicalSyncOutbox (key, kind, entityID, updatedAt, payload)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  kind = excluded.kind,
+                  entityID = excluded.entityID,
+                  updatedAt = excluded.updatedAt,
+                  payload = excluded.payload
+                WHERE excluded.updatedAt >= canonicalSyncOutbox.updatedAt
+                """,
+                arguments: [key, kind, entityID, updatedAt, payload]
+            )
         }
     }
 

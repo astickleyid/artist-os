@@ -98,12 +98,19 @@ extension AppState {
         )
         composition.updatedAt = timestamp
 
+        let syncChanges = canonicalApprovalSyncChanges(
+            song: updatedSong,
+            events: events,
+            decision: decision,
+            composition: composition
+        )
         do {
             try store.commitApproval(
                 song: updatedSong,
                 events: events,
                 decision: decision,
-                masterComposition: composition
+                masterComposition: composition,
+                syncChanges: syncChanges
             )
         } catch {
             approvalLogger.error("Section approval transaction failed: \(error.localizedDescription)")
@@ -114,12 +121,9 @@ extension AppState {
         catalog.events.append(contentsOf: events)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
-        syncCanonicalApprovalState(
-            song: updatedSong,
-            events: events,
-            decision: decision,
-            composition: composition
-        )
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
     /// Commits an artist's chosen current full-song master. The canonical
@@ -177,12 +181,19 @@ extension AppState {
         composition.outputAssetID = assetID
         composition.updatedAt = timestamp
 
+        let syncChanges = canonicalApprovalSyncChanges(
+            song: updatedSong,
+            events: [event],
+            decision: decision,
+            composition: composition
+        )
         do {
             try store.commitApproval(
                 song: updatedSong,
                 events: [event],
                 decision: decision,
-                masterComposition: composition
+                masterComposition: composition,
+                syncChanges: syncChanges
             )
         } catch {
             approvalLogger.error("Master approval transaction failed: \(error.localizedDescription)")
@@ -193,32 +204,28 @@ extension AppState {
         catalog.events.append(event)
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
-        syncCanonicalApprovalState(
-            song: updatedSong,
-            events: [event],
-            decision: decision,
-            composition: composition
-        )
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
-    /// Approval state is one canonical unit across devices: compatibility Song,
-    /// factual Events, the artist Decision, and the resulting Master Composition.
-    /// Push all four together so a remote device never receives WHAT without WHY
-    /// or a Decision without the canonical state it authorized.
-    private func syncCanonicalApprovalState(
+    /// Approval is one canonical unit: the Song compatibility projection,
+    /// factual Events, artist Decision, and Master Composition must travel
+    /// together so another device cannot reconstruct current intent without
+    /// the evidence and rationale that produced it.
+    private func canonicalApprovalSyncChanges(
         song: Song,
         events: [CreativeEvent],
         decision: CreativeDecision,
         composition: MasterComposition
-    ) {
-        guard syncStatus == .on else { return }
-        let changes = [SyncLogic.change(forSong: song)]
+    ) -> [SyncLogic.JSONDict] {
+        guard syncStatus == .on else { return [] }
+        return [SyncLogic.change(forSong: song)]
             + events.map(SyncLogic.change(forEvent:))
             + [
                 SyncLogic.change(forDecision: decision),
                 SyncLogic.change(forMasterComposition: composition)
             ]
-        scheduleCanonicalSync(changes)
     }
 
     private func normalizedRejectedAssetIDs(

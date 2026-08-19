@@ -121,4 +121,152 @@ final class CanonicalSyncOutboxTests: XCTestCase {
         }
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
     }
+
+    func testMasterAnnotationCommitsDomainTruthAndOutboxTogether() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        var song = ImportService.makeSong(title: "Atomic annotation")
+        song.sections[0].note = "keep this take"
+        song.updatedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        var composition = MasterComposition.projected(from: song)
+        composition.sections[0].note = "keep this take"
+        composition.updatedAt = song.updatedAt
+        let changes = [
+            SyncLogic.change(forSong: song),
+            SyncLogic.change(forMasterComposition: composition)
+        ]
+
+        try store.commitMasterAnnotation(
+            song: song,
+            masterComposition: composition,
+            syncChanges: changes
+        )
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(loaded.songs.first?.sections.first?.note, "keep this take")
+        XCTAssertEqual(loaded.masterCompositions.first?.sections.first?.note, "keep this take")
+        XCTAssertEqual(try store.canonicalSyncOutbox().count, 2)
+    }
+
+    func testInvalidOutboxPayloadRollsBackCanonicalMutationTransaction() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let song = ImportService.makeSong(title: "Must rollback")
+        let composition = MasterComposition.projected(from: song)
+        let malformed: SyncLogic.JSONDict = [
+            "kind": SyncLogic.masterCompositionKind,
+            "id": composition.id.uuidString,
+            "data": ["reason": "missing timestamp"]
+        ]
+
+        XCTAssertThrowsError(try store.commitMasterAnnotation(
+            song: song,
+            masterComposition: composition,
+            syncChanges: [malformed]
+        ))
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertTrue(loaded.songs.isEmpty)
+        XCTAssertTrue(loaded.masterCompositions.isEmpty)
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
+
+    func testApprovalCommitsCanonicalTruthAndOutboxTogether() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        var song = ImportService.makeSong(title: "Atomic approval")
+        let timestamp = Date(timeIntervalSince1970: 2_000_000_100)
+        song.updatedAt = timestamp
+        let event = CreativeEvent(
+            id: UUID(),
+            songID: song.id,
+            timestamp: timestamp,
+            target: .master,
+            operation: .approved,
+            beforeAssetID: nil,
+            afterAssetID: nil,
+            summary: "Master approved.",
+            confidence: 1
+        )
+        let decision = CreativeDecision(
+            id: UUID(),
+            songID: song.id,
+            timestamp: timestamp,
+            target: .master,
+            action: .approved,
+            selectedAssetID: nil,
+            relatedEventIDs: [event.id],
+            reason: "Approved for the next mix pass.",
+            source: .artist
+        )
+        var composition = MasterComposition.projected(from: song)
+        composition.updatedAt = timestamp
+        let changes = [
+            SyncLogic.change(forSong: song),
+            SyncLogic.change(forEvent: event),
+            SyncLogic.change(forDecision: decision),
+            SyncLogic.change(forMasterComposition: composition)
+        ]
+
+        try store.commitApproval(
+            song: song,
+            events: [event],
+            decision: decision,
+            masterComposition: composition,
+            syncChanges: changes
+        )
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(loaded.songs.map(\.id), [song.id])
+        XCTAssertEqual(loaded.events.map(\.id), [event.id])
+        XCTAssertEqual(loaded.decisions.map(\.id), [decision.id])
+        XCTAssertEqual(loaded.masterCompositions.map(\.id), [composition.id])
+        XCTAssertEqual(try store.canonicalSyncOutbox().count, 4)
+    }
+
+    func testInvalidOutboxPayloadRollsBackApprovalTransaction() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let song = ImportService.makeSong(title: "Approval must rollback")
+        let timestamp = Date(timeIntervalSince1970: 2_000_000_200)
+        let event = CreativeEvent(
+            id: UUID(),
+            songID: song.id,
+            timestamp: timestamp,
+            target: .master,
+            operation: .approved,
+            beforeAssetID: nil,
+            afterAssetID: nil,
+            summary: "Must not persist.",
+            confidence: 1
+        )
+        let decision = CreativeDecision(
+            id: UUID(),
+            songID: song.id,
+            timestamp: timestamp,
+            target: .master,
+            action: .approved,
+            selectedAssetID: nil,
+            relatedEventIDs: [event.id],
+            reason: "Must roll back.",
+            source: .artist
+        )
+        let composition = MasterComposition.projected(from: song)
+        let malformed: SyncLogic.JSONDict = [
+            "kind": SyncLogic.decisionKind,
+            "id": decision.id.uuidString,
+            "data": ["reason": "missing timestamp"]
+        ]
+
+        XCTAssertThrowsError(try store.commitApproval(
+            song: song,
+            events: [event],
+            decision: decision,
+            masterComposition: composition,
+            syncChanges: [malformed]
+        ))
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertTrue(loaded.songs.isEmpty)
+        XCTAssertTrue(loaded.events.isEmpty)
+        XCTAssertTrue(loaded.decisions.isEmpty)
+        XCTAssertTrue(loaded.masterCompositions.isEmpty)
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
+    }
 }
