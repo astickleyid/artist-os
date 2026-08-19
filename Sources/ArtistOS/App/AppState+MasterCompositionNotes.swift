@@ -48,19 +48,10 @@ extension AppState {
         catalog.songs[songIndex] = updatedSong
         catalog.setMasterComposition(composition)
 
-        guard syncStatus == .on else { return }
         let changes = [
             SyncLogic.change(forSong: updatedSong),
             SyncLogic.change(forMasterComposition: composition)
         ]
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await self.sync.push(changes: changes)
-                self.syncLastError = nil
-            } catch {
-                self.syncLastError = error.localizedDescription
-            }
-        }
+        scheduleCanonicalSync(changes)
     }
 }
