@@ -152,6 +152,7 @@ extension AppState {
         catalog.decisions.append(decision)
         catalog.setMasterComposition(composition)
 
+        guard syncStatus == .on else { return }
         let changes = [
             SyncLogic.change(forSong: song),
             SyncLogic.change(forEvent: event),
