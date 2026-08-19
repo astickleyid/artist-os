@@ -39,8 +39,8 @@ struct MasterCompositionView: View {
                 .buttonStyle(.bordered)
             }
 
-            // Master Composition is now the workspace read model. Legacy Song.sections
-            // remains a compatibility mirror for unmigrated annotations and old catalogs.
+            // Master Composition is the workspace read model. Projected
+            // compositions preserve old catalogs until their canonical copy lands.
             ForEach(Array(composition.sections.enumerated()), id: \.element.id) { index, section in
                 MasterSectionRow(
                     index: index + 1,
@@ -86,12 +86,10 @@ struct MasterSectionRow: View {
 
     private var asset: Asset? { state.asset(id: sourceAssetID) }
 
-    /// Notes are still edited through the legacy compatibility path. Prefer that
-    /// value until note semantics are migrated deliberately rather than turning
-    /// every annotation into a CreativeDecision.
-    private var displayedNote: String {
-        legacySection?.note ?? section.note
-    }
+    /// Canonical Master Composition is the read model. For an unmigrated catalog
+    /// the composition itself is projected from Song.sections, so this still
+    /// preserves legacy annotations without giving the mirror read precedence.
+    private var displayedNote: String { section.note }
 
     private var comparisonSection: MasterSection {
         MasterSection(
@@ -275,7 +273,7 @@ struct MasterSectionRow: View {
                 Spacer()
                 Button("Cancel") { isEditingNote = false }
                 Button("Save") {
-                    state.updateNote(noteDraft, sectionID: section.id, songID: song.id)
+                    state.updateCanonicalSectionNote(noteDraft, sectionID: section.id, songID: song.id)
                     isEditingNote = false
                 }
                 .buttonStyle(.borderedProminent)
