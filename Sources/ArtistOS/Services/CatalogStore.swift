@@ -5,6 +5,7 @@ import os
 
 struct CanonicalSyncOutboxItem {
     let key: String
+    let payload: Data
     let change: SyncLogic.JSONDict
 }
 
@@ -199,16 +200,19 @@ final class CatalogStore {
                 guard let change = try JSONSerialization.jsonObject(with: payload) as? SyncLogic.JSONDict else {
                     throw CanonicalSyncOutboxError.invalidStoredPayload
                 }
-                return CanonicalSyncOutboxItem(key: key, change: change)
+                return CanonicalSyncOutboxItem(key: key, payload: payload, change: change)
             }
         }
     }
 
-    func removeCanonicalSyncOutbox(keys: [String]) throws {
-        guard !keys.isEmpty else { return }
+    func removeCanonicalSyncOutbox(_ acknowledged: [CanonicalSyncOutboxItem]) throws {
+        guard !acknowledged.isEmpty else { return }
         try database.dbQueue.write { db in
-            for key in keys {
-                try db.execute(sql: "DELETE FROM canonicalSyncOutbox WHERE key = ?", arguments: [key])
+            for item in acknowledged {
+                try db.execute(
+                    sql: "DELETE FROM canonicalSyncOutbox WHERE key = ? AND payload = ?",
+                    arguments: [item.key, item.payload]
+                )
             }
         }
     }
