@@ -209,6 +209,10 @@ extension AppState {
         }
     }
 
+    /// Approval is one canonical unit: the Song compatibility projection,
+    /// factual Events, artist Decision, and Master Composition must travel
+    /// together so another device cannot reconstruct current intent without
+    /// the evidence and rationale that produced it.
     private func canonicalApprovalSyncChanges(
         song: Song,
         events: [CreativeEvent],
