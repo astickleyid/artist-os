@@ -35,10 +35,18 @@ extension AppState {
         }
         updatedSong.updatedAt = timestamp
 
+        let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
+            ? [
+                SyncLogic.change(forSong: updatedSong),
+                SyncLogic.change(forMasterComposition: composition)
+            ]
+            : []
+
         do {
             try store.commitMasterAnnotation(
                 song: updatedSong,
-                masterComposition: composition
+                masterComposition: composition,
+                syncChanges: syncChanges
             )
         } catch {
             masterNotesLogger.error("Master note transaction failed: \(error.localizedDescription)")
@@ -48,11 +56,8 @@ extension AppState {
         catalog.songs[songIndex] = updatedSong
         catalog.setMasterComposition(composition)
 
-        guard syncStatus == .on else { return }
-        let changes = [
-            SyncLogic.change(forSong: updatedSong),
-            SyncLogic.change(forMasterComposition: composition)
-        ]
-        scheduleCanonicalSync(changes)
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 }
