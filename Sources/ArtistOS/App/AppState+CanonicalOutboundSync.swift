@@ -78,7 +78,10 @@ extension AppState {
         guard didPush else { return }
 
         do {
-            try store.removeCanonicalSyncOutbox(keys: pending.map(\.key))
+            // Delete only the exact payloads acknowledged by this push. If a newer
+            // edit replaced the same kind:id while the request was in flight, its
+            // different payload remains queued for the next drain.
+            try store.removeCanonicalSyncOutbox(pending)
         } catch {
             syncLastError = "Cloud accepted changes, but local outbox cleanup failed: \(error.localizedDescription)"
         }
