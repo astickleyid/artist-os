@@ -119,4 +119,59 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
             .locked
         )
     }
+
+    func testSetCanonicalStateDoesNotUseStaleLegacySourceInHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "State Divergence")
+
+        let songID = try XCTUnwrap(state.catalog.songs.first?.id)
+        let sectionID = try XCTUnwrap(state.catalog.songs.first?.sections.first?.id)
+
+        // Materialize canonical truth while the projected legacy source is still nil.
+        // The stale legacy mirror introduced below must never regain authority.
+        let canonicalComposition = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        state.catalog.setMasterComposition(canonicalComposition)
+        try store.upsert(masterComposition: canonicalComposition)
+
+        let staleLegacyAsset = Asset(
+            id: UUID(), title: "Stale Legacy Source", originalFilename: "stale.wav",
+            role: .fullMix, createdAt: Date(), duration: nil,
+            localURLBookmark: nil, songID: songID
+        )
+        state.catalog.assets.append(staleLegacyAsset)
+        try store.insert(asset: staleLegacyAsset)
+
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == songID })
+        let legacyIndex = try XCTUnwrap(state.catalog.songs[songIndex].sections.firstIndex { $0.id == sectionID })
+        state.catalog.songs[songIndex].sections[legacyIndex].assetID = staleLegacyAsset.id
+        try store.upsert(song: state.catalog.songs[songIndex])
+
+        let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
+        let canonicalSection = try XCTUnwrap(composition.sections.first { $0.id == sectionID })
+        XCTAssertNil(canonicalSection.selection(.sourceAsset)?.referenceID)
+        XCTAssertEqual(state.catalog.songs[songIndex].sections[legacyIndex].assetID, staleLegacyAsset.id)
+
+        state.setCanonicalSectionState(.needsDecision, sectionID: sectionID, songID: songID)
+
+        let event = try XCTUnwrap(state.catalog.events.last)
+        let decision = try XCTUnwrap(state.catalog.decisions.last)
+        XCTAssertEqual(event.operation, .needsDecision)
+        XCTAssertNil(event.beforeAssetID)
+        XCTAssertNil(event.afterAssetID)
+        XCTAssertEqual(decision.action, .deferred)
+        XCTAssertNil(decision.selectedAssetID)
+        XCTAssertEqual(decision.relatedEventIDs, [event.id])
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        let reloadedEvent = try XCTUnwrap(reloaded.events.first { $0.id == event.id })
+        let reloadedDecision = try XCTUnwrap(reloaded.decisions.first { $0.id == decision.id })
+        XCTAssertNil(reloadedEvent.beforeAssetID)
+        XCTAssertNil(reloadedEvent.afterAssetID)
+        XCTAssertNil(reloadedDecision.selectedAssetID)
+        XCTAssertEqual(
+            reloaded.masterCompositions.first { $0.songID == songID }?.sections.first { $0.id == sectionID }?.state,
+            .needsDecision
+        )
+    }
 }

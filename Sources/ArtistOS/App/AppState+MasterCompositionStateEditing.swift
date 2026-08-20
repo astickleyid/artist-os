@@ -98,8 +98,9 @@ extension AppState {
         updatedSong.updatedAt = timestamp
 
         let section = composition.sections[canonicalIndex]
+        // Permanent state-change history must describe canonical truth. The
+        // legacy Song source is only a compatibility mirror and may be stale.
         let selectedAssetID = section.selection(.sourceAsset)?.referenceID
-            ?? updatedSong.sections[legacyIndex].assetID
         let event = CreativeEvent(
             id: UUID(), songID: songID, timestamp: timestamp,
             target: canonicalMasterTarget(forSectionName: section.name),
