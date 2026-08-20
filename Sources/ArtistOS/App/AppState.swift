@@ -97,7 +97,7 @@ final class AppState: ObservableObject {
     }
 
     var pendingDecisions: [VersionIntelligence.Decision] {
-        catalog.songs.flatMap { song in
+        let decisions: [VersionIntelligence.Decision] = catalog.songs.flatMap { song -> [VersionIntelligence.Decision] in
             guard let composition = catalog.masterComposition(for: song.id) else { return [] }
             return VersionIntelligence.decisions(
                 for: song,
@@ -105,6 +105,7 @@ final class AppState: ObservableObject {
                 assets: assets(for: song.id)
             )
         }
+        return decisions
     }
 
     private func songIndex(_ id: UUID) -> Int? {
