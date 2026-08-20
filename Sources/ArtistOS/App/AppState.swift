@@ -97,7 +97,14 @@ final class AppState: ObservableObject {
     }
 
     var pendingDecisions: [VersionIntelligence.Decision] {
-        catalog.songs.flatMap { VersionIntelligence.decisions(for: $0, assets: assets(for: $0.id)) }
+        catalog.songs.flatMap { song in
+            guard let composition = catalog.masterComposition(for: song.id) else { return [] }
+            return VersionIntelligence.decisions(
+                for: song,
+                masterComposition: composition,
+                assets: assets(for: song.id)
+            )
+        }
     }
 
     private func songIndex(_ id: UUID) -> Int? {
@@ -509,20 +516,68 @@ final class AppState: ObservableObject {
         let ids = songIDs ?? catalog.songs.map(\.id)
         for id in ids {
             guard let si = songIndex(id) else { continue }
+
+            var composition = catalog.masterCompositions.first(where: { $0.songID == id })
+                ?? MasterComposition.projected(from: catalog.songs[si])
             let flags = VersionIntelligence.applyAutoDecisions(
-                song: &catalog.songs[si],
+                masterComposition: &composition,
                 assets: assets(for: id)
             )
             guard !flags.isEmpty else { continue }
-            persistSong(at: si)
-            for flag in flags {
-                record(
-                    songID: id,
+
+            let timestamp = Date()
+            composition.updatedAt = timestamp
+            var updatedSong = catalog.songs[si]
+            let canonicalByID = Dictionary(uniqueKeysWithValues: composition.sections.map { ($0.id, $0) })
+            for index in updatedSong.sections.indices {
+                guard let canonical = canonicalByID[updatedSong.sections[index].id] else { continue }
+                updatedSong.sections[index].state = canonical.state
+                updatedSong.sections[index].confidence = canonical.confidence
+            }
+
+            let locked = composition.sections.filter { $0.state == .locked }.count
+            updatedSong.progress = composition.sections.isEmpty
+                ? 0
+                : Double(locked) / Double(composition.sections.count)
+            let unresolved = composition.sections.filter { $0.state == .needsDecision }
+            updatedSong.risk = unresolved.isEmpty
+                ? (locked == composition.sections.count && !composition.sections.isEmpty ? "Master locked" : "In assembly")
+                : "\(unresolved.map(\.name).joined(separator: ", ")) decision unresolved"
+            updatedSong.updatedAt = timestamp
+
+            let events = flags.map { flag in
+                CreativeEvent(
+                    id: UUID(), songID: id, timestamp: timestamp,
                     target: VersionIntelligence.slotTarget(forSectionName: flag.sectionName),
                     operation: .needsDecision,
+                    beforeAssetID: nil, afterAssetID: nil,
                     summary: "\(flag.sectionName) auto-flagged: \(flag.count) \(flag.role.rawValue.lowercased()) candidates need a call.",
                     confidence: 0.8
                 )
+            }
+            let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
+                ? [SyncLogic.change(forSong: updatedSong)]
+                    + events.map(SyncLogic.change(forEvent:))
+                    + [SyncLogic.change(forMasterComposition: composition)]
+                : []
+
+            do {
+                try store.commitAutoDecisionEscalation(
+                    song: updatedSong,
+                    events: events,
+                    masterComposition: composition,
+                    syncChanges: syncChanges
+                )
+            } catch {
+                logger.error("Auto-decision escalation transaction failed: \(error.localizedDescription)")
+                continue
+            }
+
+            catalog.songs[si] = updatedSong
+            catalog.events.append(contentsOf: events)
+            catalog.setMasterComposition(composition)
+            if !syncChanges.isEmpty {
+                resumeCanonicalSyncOutbox()
             }
         }
     }
