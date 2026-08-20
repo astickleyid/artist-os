@@ -127,6 +127,13 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
 
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
         let sectionID = try XCTUnwrap(state.catalog.songs.first?.sections.first?.id)
+
+        // Materialize canonical truth while the projected legacy source is still nil.
+        // The stale legacy mirror introduced below must never regain authority.
+        let canonicalComposition = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        state.catalog.setMasterComposition(canonicalComposition)
+        try store.upsert(masterComposition: canonicalComposition)
+
         let staleLegacyAsset = Asset(
             id: UUID(), title: "Stale Legacy Source", originalFilename: "stale.wav",
             role: .fullMix, createdAt: Date(), duration: nil,
