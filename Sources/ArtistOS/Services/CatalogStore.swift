@@ -130,6 +130,23 @@ final class CatalogStore {
         }
     }
 
+    /// Persists an automatically observed decision escalation without creating
+    /// an artist-intent Decision. The canonical state, compatibility Song mirror,
+    /// factual Events, and outbound sync intent share one transaction.
+    func commitAutoDecisionEscalation(
+        song: Song,
+        events: [CreativeEvent],
+        masterComposition: MasterComposition,
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
+        try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            for event in events { try EventRecord(event).save(db) }
+            try replaceMasterComposition(masterComposition, in: db)
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
+        }
+    }
+
     func commitApproval(
         song: Song,
         events: [CreativeEvent],
@@ -286,7 +303,9 @@ final class CatalogStore {
     }
 
     func deleteWatchedFolder(id: UUID) throws {
-        _ = try database.dbQueue.write { db in try WatchedFolderRecord.filter(Column("id") == id).deleteAll(db) }
+        _ = try database.dbQueue.write { db in
+            try WatchedFolderRecord.filter(Column("id") == id).deleteAll(db)
+        }
     }
 
     func seed(_ catalog: ArtistCatalog) {

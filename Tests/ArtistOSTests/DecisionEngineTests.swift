@@ -31,6 +31,33 @@ final class DecisionEngineTests: XCTestCase {
         XCTAssertEqual(song.sections[2].state, .open)
     }
 
+    func testCanonicalD1IgnoresStaleLegacyState() {
+        var song = ImportService.makeSong(title: "T")
+        var composition = MasterComposition.projected(from: song)
+        let hooks = [asset(.hook, "v1", 1, songID: song.id), asset(.hook, "v2", 2, songID: song.id)]
+
+        // Legacy mirror claims the hook is locked, but canonical truth remains open.
+        song.sections[2].state = .locked
+        var fired = VersionIntelligence.applyAutoDecisions(
+            masterComposition: &composition,
+            assets: hooks
+        )
+        XCTAssertEqual(fired.count, 1)
+        XCTAssertEqual(composition.sections[2].state, .needsDecision)
+        XCTAssertEqual(song.sections[2].state, .locked)
+
+        // Reverse the divergence: stale legacy openness cannot re-escalate a
+        // canonically locked slot.
+        composition.sections[2].state = .locked
+        song.sections[2].state = .open
+        fired = VersionIntelligence.applyAutoDecisions(
+            masterComposition: &composition,
+            assets: hooks
+        )
+        XCTAssertTrue(fired.isEmpty)
+        XCTAssertEqual(composition.sections[2].state, .locked)
+    }
+
     func testD2MasterLifecycle() {
         var song = ImportService.makeSong(title: "T")
         let v1 = asset(.fullMix, "v1", 1, songID: song.id)
@@ -87,34 +114,61 @@ final class DecisionEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testEnginePersistsFlagsAndPinning() throws {
+    func testEnginePersistsCanonicalFlagsWithoutInventingArtistDecision() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Engine Song")
         let songID = state.catalog.songs[0].id
+
+        // Materialize canonical truth while deliberately making the legacy
+        // mirror disagree. The automatic engine must follow canonical state.
+        let canonicalBefore = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        state.catalog.setMasterComposition(canonicalBefore)
+        try store.upsert(masterComposition: canonicalBefore)
+        state.catalog.songs[0].sections[2].state = .locked
+        try store.upsert(song: state.catalog.songs[0])
+
         state.catalog.assets.append(asset(.hook, "take1", 1, songID: songID))
         state.catalog.assets.append(asset(.hook, "take2", 2, songID: songID))
 
+        let eventCountBefore = state.catalog.events.count
+        let decisionCountBefore = state.catalog.decisions.count
         state.runDecisionEngine(songIDs: [songID])
+
+        let canonicalAfter = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        XCTAssertEqual(canonicalAfter.sections[2].state, .needsDecision)
+        XCTAssertGreaterThanOrEqual(canonicalAfter.sections[2].confidence, 0.5)
         XCTAssertEqual(state.catalog.songs[0].sections[2].state, .needsDecision)
+        XCTAssertEqual(state.catalog.events.count, eventCountBefore + 1)
+        XCTAssertEqual(state.catalog.decisions.count, decisionCountBefore)
         XCTAssertTrue(state.catalog.events.contains {
             $0.operation == .needsDecision && $0.summary.contains("auto-flagged")
         })
         XCTAssertEqual(state.pendingDecisions.count, 1)
+
+        // D1 remains idempotent after canonical persistence.
+        state.runDecisionEngine(songIDs: [songID])
+        XCTAssertEqual(state.catalog.events.count, eventCountBefore + 1)
+        XCTAssertEqual(state.catalog.decisions.count, decisionCountBefore)
+
+        // Persistence round-trip keeps canonical truth and the legacy mirror aligned.
+        var reloaded = store.loadCatalog(artistName: "T")
+        let reloadedComposition = try XCTUnwrap(reloaded.masterComposition(for: songID))
+        XCTAssertEqual(reloadedComposition.sections[2].state, .needsDecision)
+        XCTAssertEqual(reloaded.songs[0].sections[2].state, .needsDecision)
 
         let mixA = asset(.fullMix, "v1", 1, songID: songID)
         let mixB = asset(.fullMix, "v2", 2, songID: songID)
         state.catalog.assets.append(contentsOf: [mixA, mixB])
         XCTAssertEqual(state.pendingDecisions.count, 2)
 
-        state.pinMaster(songID: songID, assetID: mixB.id)
+        state.approveMasterDecision(songID: songID, assetID: mixB.id)
+        XCTAssertEqual(state.catalog.masterComposition(for: songID)?.outputAssetID, mixB.id)
         XCTAssertEqual(state.catalog.songs[0].masterAssetID, mixB.id)
-        XCTAssertTrue(state.catalog.events.contains { $0.summary.contains("pinned as current master") })
         XCTAssertEqual(state.pendingDecisions.count, 1) // slot decision remains
 
-        // Persistence round-trip
-        let reloaded = store.loadCatalog(artistName: "T")
+        reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(reloaded.masterComposition(for: songID)?.outputAssetID, mixB.id)
         XCTAssertEqual(reloaded.songs[0].masterAssetID, mixB.id)
-        XCTAssertEqual(reloaded.songs[0].sections[2].state, .needsDecision)
     }
 }

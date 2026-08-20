@@ -178,26 +178,49 @@ public enum VersionIntelligence {
         }
     }
 
-    /// D1: escalate-only, idempotent. Mutates the song's sections.
-    public static func applyAutoDecisions(song: inout Song, assets: [Asset]) -> [AutoFlag] {
+    /// D1 canonical implementation: escalate-only and idempotent. Current
+    /// workflow state belongs to Master Composition; Song is compatibility data.
+    public static func applyAutoDecisions(
+        masterComposition: inout MasterComposition,
+        assets: [Asset]
+    ) -> [AutoFlag] {
         var fired: [AutoFlag] = []
         let escalatable: Set<SectionState> = [.open, .candidate, .experiment]
         for (role, target) in decisiveRoles {
             let candidates = assets.filter { $0.role == role }
             guard candidates.count >= 2 else { continue }
-            for index in song.sections.indices {
-                guard slotTarget(forSectionName: song.sections[index].name) == target,
-                      escalatable.contains(song.sections[index].state)
+            for index in masterComposition.sections.indices {
+                guard slotTarget(forSectionName: masterComposition.sections[index].name) == target,
+                      escalatable.contains(masterComposition.sections[index].state)
                 else { continue }
-                song.sections[index].state = .needsDecision
-                song.sections[index].confidence = max(song.sections[index].confidence, 0.5)
+                masterComposition.sections[index].state = .needsDecision
+                masterComposition.sections[index].confidence = max(
+                    masterComposition.sections[index].confidence,
+                    0.5
+                )
                 fired.append(AutoFlag(
-                    sectionID: song.sections[index].id,
-                    sectionName: song.sections[index].name,
+                    sectionID: masterComposition.sections[index].id,
+                    sectionName: masterComposition.sections[index].name,
                     role: role,
                     count: candidates.count
                 ))
             }
+        }
+        return fired
+    }
+
+    /// Backward-compatible D1 wrapper for legacy callers and shared logic tests.
+    /// New product code should mutate canonical Master Composition instead.
+    public static func applyAutoDecisions(song: inout Song, assets: [Asset]) -> [AutoFlag] {
+        var composition = MasterComposition.projected(from: song)
+        let fired = applyAutoDecisions(masterComposition: &composition, assets: assets)
+        guard !fired.isEmpty else { return [] }
+
+        let canonicalByID = Dictionary(uniqueKeysWithValues: composition.sections.map { ($0.id, $0) })
+        for index in song.sections.indices {
+            guard let canonical = canonicalByID[song.sections[index].id] else { continue }
+            song.sections[index].state = canonical.state
+            song.sections[index].confidence = canonical.confidence
         }
         return fired
     }
