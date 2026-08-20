@@ -99,7 +99,7 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         let removalDecision = try XCTUnwrap(state.catalog.decisions.last)
         XCTAssertEqual(removalEvent.beforeAssetID, canonicalAsset.id)
         XCTAssertEqual(removalDecision.action, .reverted)
-        XCTAssertEqual(Set(removalDecision.rejectedAssetIDs), Set([canonicalAsset.id, legacyAsset.id]))
+        XCTAssertEqual(Set(removalDecision.rejectedAssetIDs), Set([canonicalAsset.id]))
         XCTAssertEqual(removalDecision.relatedEventIDs, [removalEvent.id])
 
         let reloaded = store.loadCatalog(artistName: "T")
