@@ -27,7 +27,7 @@ final class ApprovalFlowTests: XCTestCase {
         state.catalog.assets.append(contentsOf: [winner, loser])
         try store.insert(asset: winner)
         try store.insert(asset: loser)
-        state.setState(.needsDecision, sectionID: sectionID, songID: song.id)
+        state.setCanonicalSectionState(.needsDecision, sectionID: sectionID, songID: song.id)
 
         let eventCountBeforeApproval = state.catalog.events.count
         state.approveSectionDecision(
@@ -44,8 +44,8 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(updatedSection.state, .locked)
         XCTAssertEqual(updatedSong.progress, 0.2, accuracy: 0.001)
 
-        XCTAssertEqual(state.catalog.decisions.count, 1)
-        let decision = try XCTUnwrap(state.catalog.decisions.first)
+        XCTAssertEqual(state.catalog.decisions.count, 2)
+        let decision = try XCTUnwrap(state.catalog.decisions.last)
         XCTAssertEqual(decision.target, .hook)
         XCTAssertEqual(decision.action, .approved)
         XCTAssertEqual(decision.selectedAssetID, winner.id)
@@ -64,8 +64,8 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(canonicalSection.state, .locked)
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertEqual(reloaded.decisions.count, 1)
-        XCTAssertEqual(reloaded.decisions[0].id, decision.id)
+        XCTAssertEqual(reloaded.decisions.count, 2)
+        XCTAssertEqual(reloaded.decisions.last?.id, decision.id)
         let persistedComposition = try XCTUnwrap(reloaded.masterCompositions.first { $0.songID == song.id })
         let persistedSection = try XCTUnwrap(persistedComposition.sections.first { $0.id == sectionID })
         XCTAssertEqual(persistedSection.selection(.sourceAsset)?.referenceID, winner.id)
