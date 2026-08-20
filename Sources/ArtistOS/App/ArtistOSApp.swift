@@ -23,7 +23,7 @@ struct ArtistOSApp: App {
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 Button("Re-analyze Filenames") {
-                    state.reanalyzeCatalog()
+                    state.reanalyzeCatalogSafely()
                 }
             }
         }
