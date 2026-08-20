@@ -133,7 +133,14 @@ struct SongListColumn: View {
 
     @ViewBuilder
     private var decideInbox: some View {
-        let decisions = state.pendingDecisions
+        let decisions: [VersionIntelligence.Decision] = state.catalog.songs.flatMap { song -> [VersionIntelligence.Decision] in
+            guard let composition = state.catalog.masterComposition(for: song.id) else { return [] }
+            return VersionIntelligence.decisions(
+                for: song,
+                masterComposition: composition,
+                assets: state.assets(for: song.id)
+            )
+        }
         if !decisions.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Decide · \(decisions.count)")
