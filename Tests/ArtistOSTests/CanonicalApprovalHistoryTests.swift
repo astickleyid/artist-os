@@ -63,4 +63,56 @@ final class CanonicalApprovalHistoryTests: XCTestCase {
         let persistedSection = try XCTUnwrap(persistedComposition.sections.first { $0.id == sectionID })
         XCTAssertEqual(persistedSection.selection(.sourceAsset)?.referenceID, newWinner.id)
     }
+
+    func testMasterApprovalUsesCanonicalPriorOutputWhenLegacyMirrorDiverges() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Canonical Master Approval")
+
+        let songID = try XCTUnwrap(state.catalog.songs.first?.id)
+        let canonicalPrior = Asset(
+            id: UUID(), title: "Canonical Master", originalFilename: "canonical-master.wav", role: .fullMix,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
+        )
+        let newWinner = Asset(
+            id: UUID(), title: "New Master", originalFilename: "new-master.wav", role: .fullMix,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
+        )
+        state.catalog.assets.append(contentsOf: [canonicalPrior, newWinner])
+        try store.insert(asset: canonicalPrior)
+        try store.insert(asset: newWinner)
+
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == songID })
+        state.catalog.songs[songIndex].masterAssetID = newWinner.id
+        try store.upsert(song: state.catalog.songs[songIndex])
+
+        var composition = MasterComposition.projected(from: state.catalog.songs[songIndex])
+        composition.outputAssetID = canonicalPrior.id
+        state.catalog.setMasterComposition(composition)
+        try store.upsert(masterComposition: composition)
+
+        let eventCount = state.catalog.events.count
+        let decisionCount = state.catalog.decisions.count
+        state.approveMasterDecision(songID: songID, assetID: newWinner.id)
+
+        XCTAssertEqual(state.catalog.decisions.count, decisionCount + 1, "Canonical master divergence must not be suppressed by a matching legacy mirror")
+        let newEvents = Array(state.catalog.events.dropFirst(eventCount))
+        XCTAssertEqual(newEvents.count, 1)
+        XCTAssertEqual(newEvents.first?.operation, .approved)
+        XCTAssertEqual(newEvents.first?.beforeAssetID, canonicalPrior.id)
+        XCTAssertEqual(newEvents.first?.afterAssetID, newWinner.id)
+
+        let decision = try XCTUnwrap(state.catalog.decisions.last)
+        XCTAssertEqual(decision.target, .master)
+        XCTAssertEqual(decision.selectedAssetID, newWinner.id)
+        XCTAssertEqual(decision.relatedEventIDs, newEvents.map(\.id))
+
+        let updatedComposition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
+        XCTAssertEqual(updatedComposition.outputAssetID, newWinner.id)
+        let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
+        XCTAssertEqual(updatedSong.masterAssetID, newWinner.id, "Legacy master pointer remains a compatibility mirror until final retirement")
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.outputAssetID, newWinner.id)
+    }
 }
