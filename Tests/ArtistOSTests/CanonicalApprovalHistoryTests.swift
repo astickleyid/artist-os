@@ -115,4 +115,51 @@ final class CanonicalApprovalHistoryTests: XCTestCase {
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.outputAssetID, newWinner.id)
     }
+
+    func testMasterApprovalHealsStaleLegacyMirrorWithoutInventingHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Master Mirror Repair")
+
+        let songID = try XCTUnwrap(state.catalog.songs.first?.id)
+        let canonicalMaster = Asset(
+            id: UUID(), title: "Canonical Master", originalFilename: "canonical-master.wav", role: .fullMix,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
+        )
+        let staleLegacyMaster = Asset(
+            id: UUID(), title: "Stale Legacy Master", originalFilename: "stale-master.wav", role: .fullMix,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: songID
+        )
+        state.catalog.assets.append(contentsOf: [canonicalMaster, staleLegacyMaster])
+        try store.insert(asset: canonicalMaster)
+        try store.insert(asset: staleLegacyMaster)
+
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == songID })
+        state.catalog.songs[songIndex].masterAssetID = staleLegacyMaster.id
+        try store.upsert(song: state.catalog.songs[songIndex])
+
+        var composition = MasterComposition.projected(from: state.catalog.songs[songIndex])
+        composition.outputAssetID = canonicalMaster.id
+        state.catalog.setMasterComposition(composition)
+        try store.upsert(masterComposition: composition)
+
+        let eventCount = state.catalog.events.count
+        let decisionCount = state.catalog.decisions.count
+        state.approveMasterDecision(songID: songID, assetID: canonicalMaster.id)
+
+        XCTAssertEqual(state.catalog.events.count, eventCount, "Compatibility repair must not invent a factual event")
+        XCTAssertEqual(state.catalog.decisions.count, decisionCount, "Compatibility repair must not invent artist intent")
+        XCTAssertEqual(state.catalog.songs[songIndex].masterAssetID, canonicalMaster.id)
+        XCTAssertEqual(
+            state.catalog.masterCompositions.first { $0.songID == songID }?.outputAssetID,
+            canonicalMaster.id
+        )
+        XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty, "Sync-off compatibility repair should not enqueue network work")
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.masterAssetID, canonicalMaster.id)
+        XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.outputAssetID, canonicalMaster.id)
+        XCTAssertEqual(reloaded.events.count, eventCount)
+        XCTAssertEqual(reloaded.decisions.count, decisionCount)
+    }
 }
