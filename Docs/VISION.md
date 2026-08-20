@@ -46,7 +46,7 @@ Versions are derived views over assets + creative history. They are not primary 
 ## Sync (Cloudflare — live, metadata-first)
 Architecture per owner decision: one Worker (worker/src/index.js) in front of D1
 (metadata) + R2 (opt-in audio).
-- **Metadata-first**: Song, Asset, Creative Event, Creative Decision, and Master Composition metadata participate in the canonical native sync contract. Outbound canonical intent is persisted in a GRDB outbox before network delivery and survives relaunch; local domain mutation + outbox insertion still need to become one shared transaction on every mutation path.
+- **Metadata-first**: Song, Asset, Creative Event, Creative Decision, and Master Composition metadata participate in the canonical native sync contract. Outbound canonical intent is persisted in a GRDB outbox before network delivery and survives relaunch; migrated canonical mutation paths persist domain truth + outbound sync intent atomically in the same GRDB transaction.
 - **Audio stays local by default** until a person explicitly chooses to make an
   asset available everywhere — the Frame.io/Splice pattern.
 - **Auth**: no passwords. Creating an account issues a bearer token; a second
