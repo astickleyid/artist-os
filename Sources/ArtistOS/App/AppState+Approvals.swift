@@ -140,7 +140,9 @@ extension AppState {
               let asset = catalog.assets.first(where: { $0.id == assetID && $0.songID == songID })
         else { return }
 
-        let oldMasterID = catalog.songs[songIndex].masterAssetID
+        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
+            ?? MasterComposition.projected(from: catalog.songs[songIndex])
+        let oldMasterID = composition.outputAssetID
         guard oldMasterID != assetID else { return }
 
         let timestamp = Date()
@@ -177,8 +179,6 @@ extension AppState {
             source: .artist
         )
 
-        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
-            ?? MasterComposition.projected(from: updatedSong)
         composition.outputAssetID = assetID
         composition.updatedAt = timestamp
 
