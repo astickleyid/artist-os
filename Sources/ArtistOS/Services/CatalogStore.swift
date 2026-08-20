@@ -308,7 +308,12 @@ final class CatalogStore {
     func delete(masterCompositionID: UUID) throws { _ = try database.dbQueue.write { db in try MasterCompositionRecord.filter(Column("id") == masterCompositionID).deleteAll(db) } }
 
     func watchedFolders() -> [WatchedFolder] {
-        (try? database.dbQueue.read { db in try WatchedFolderRecord.order(Column("addedAt")).fetchAll(db).map { $0.toDomain() }) ?? []
+        (try? database.dbQueue.read { db in
+            try WatchedFolderRecord
+                .order(Column("addedAt"))
+                .fetchAll(db)
+                .map { $0.toDomain() }
+        }) ?? []
     }
 
     func save(watchedFolder: WatchedFolder) throws {
