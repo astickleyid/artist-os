@@ -21,8 +21,15 @@ extension AppState {
         else { return }
 
         let canonicalSection = composition.sections[compositionSectionIndex]
-        let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID
-        guard let oldSourceID else { return }
+        guard let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID else {
+            healLegacySectionMirrorIfNeeded(
+                songIndex: songIndex,
+                sectionIndex: sectionIndex,
+                canonicalSection: canonicalSection,
+                composition: composition
+            )
+            return
+        }
 
         let timestamp = Date()
         var updatedSong = catalog.songs[songIndex]
@@ -204,6 +211,51 @@ extension AppState {
             composition: composition,
             failureMessage: "Remove master slot transaction failed"
         )
+    }
+
+    /// Canonical truth may already be empty while an old Song compatibility
+    /// mirror is stale. Heal that mirror without manufacturing creative history.
+    private func healLegacySectionMirrorIfNeeded(
+        songIndex: Int,
+        sectionIndex: Int,
+        canonicalSection: MasterCompositionSection,
+        composition: MasterComposition
+    ) {
+        let legacySection = catalog.songs[songIndex].sections[sectionIndex]
+        guard legacySection.assetID != nil
+                || legacySection.state != canonicalSection.state
+                || legacySection.confidence != canonicalSection.confidence
+        else { return }
+
+        let timestamp = Date()
+        var updatedSong = catalog.songs[songIndex]
+        updatedSong.sections[sectionIndex].assetID = nil
+        updatedSong.sections[sectionIndex].state = canonicalSection.state
+        updatedSong.sections[sectionIndex].confidence = canonicalSection.confidence
+        recomputeMasterProgress(&updatedSong)
+        updatedSong.updatedAt = timestamp
+
+        let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
+            ? [SyncLogic.change(forSong: updatedSong)]
+            : []
+
+        do {
+            try store.commitMasterAnnotation(
+                song: updatedSong,
+                masterComposition: composition,
+                syncChanges: syncChanges
+            )
+        } catch {
+            masterEditingLogger.error("Heal legacy master mirror failed: \(error.localizedDescription)")
+            return
+        }
+
+        catalog.songs[songIndex] = updatedSong
+        catalog.setMasterComposition(composition)
+
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
     private func commitMasterEdit(
