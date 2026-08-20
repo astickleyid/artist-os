@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct ArtistOSApp: App {
     @StateObject private var state = AppState()
+    @State private var reanalysisBlocked = false
 
     var body: some Scene {
         WindowGroup {
@@ -10,6 +11,11 @@ struct ArtistOSApp: App {
                 .environmentObject(state)
                 .environmentObject(state.audio)
                 .frame(minWidth: 1180, minHeight: 760)
+                .alert("Re-analysis paused", isPresented: $reanalysisBlocked) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text("Artist OS found current Master Composition references that filename regrouping could move or delete. Nothing was changed.")
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -23,7 +29,7 @@ struct ArtistOSApp: App {
                 }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 Button("Re-analyze Filenames") {
-                    state.reanalyzeCatalog()
+                    reanalysisBlocked = !state.reanalyzeCatalogSafely()
                 }
             }
         }
