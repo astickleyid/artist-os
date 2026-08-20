@@ -184,10 +184,9 @@ final class MasterCompositionPersistenceTests: XCTestCase {
         XCTAssertEqual(projected.songID, song.id)
         XCTAssertEqual(projected.outputAssetID, outputID)
         assertDateEqual(projected.updatedAt, updatedAt)
-        XCTAssertEqual(projected.sections.count, 1)
+        XCTAssertEqual(projected.sections.count, song.sections.count)
 
-        let section = projected.sections[0]
-        XCTAssertEqual(section.id, sectionID)
+        let section = try XCTUnwrap(projected.sections.first { $0.id == sectionID })
         XCTAssertEqual(section.name, "Final Hook")
         XCTAssertEqual(section.role, "Lead Vocal")
         XCTAssertEqual(section.selection(.sourceAsset)?.referenceID, sourceID)
