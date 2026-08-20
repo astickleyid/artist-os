@@ -133,6 +133,24 @@ final class FilenameReanalysisSafetyTests: XCTestCase {
         XCTAssertEqual(plan.blockedAssetIDs, Set([protected.id]))
         XCTAssertEqual(plan.movableAssetIDs, Set([movable.id]))
         XCTAssertFalse(plan.canRunLegacyPass)
+
+        XCTAssertFalse(state.reanalyzeCatalogSafely())
+        XCTAssertEqual(state.catalog.assets.first(where: { $0.id == protected.id })?.songID, homeID)
+
+        let moved = try XCTUnwrap(state.catalog.assets.first(where: { $0.id == movable.id }))
+        XCTAssertNotEqual(moved.songID, homeID)
+        XCTAssertEqual(
+            state.catalog.songs.first(where: { $0.id == moved.songID })?.title.lowercased(),
+            "safe target"
+        )
+        XCTAssertEqual(
+            state.catalog.masterComposition(for: otherID)?.sections[sectionIndex].selection(.sourceAsset)?.referenceID,
+            protected.id
+        )
+
+        let reloaded = store.loadCatalog(artistName: "STICK")
+        XCTAssertEqual(reloaded.assets.first(where: { $0.id == protected.id })?.songID, homeID)
+        XCTAssertEqual(reloaded.assets.first(where: { $0.id == movable.id })?.songID, moved.songID)
     }
 
     func testPlanBlocksLastMovableOwnedAssetWhenCanonicalSongStillReferencesExternalAsset() throws {

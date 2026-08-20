@@ -11,10 +11,10 @@ struct ArtistOSApp: App {
                 .environmentObject(state)
                 .environmentObject(state.audio)
                 .frame(minWidth: 1180, minHeight: 760)
-                .alert("Re-analysis paused", isPresented: $reanalysisBlocked) {
+                .alert("Protected assets kept in place", isPresented: $reanalysisBlocked) {
                     Button("OK", role: .cancel) {}
                 } message: {
-                    Text("Artist OS found current Master Composition references that filename regrouping could move or delete. Nothing was changed.")
+                    Text("Artist OS kept assets referenced by the current Master Composition in place. Safe filename updates and regrouping were still applied.")
                 }
         }
         .windowStyle(.hiddenTitleBar)

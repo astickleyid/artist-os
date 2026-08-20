@@ -163,6 +163,22 @@ final class CatalogStore {
         }
     }
 
+    /// Persists one filename-intelligence mutation as a single unit so ownership
+    /// metadata can never move without its factual history and durable sync intent.
+    func commitFilenameReanalysis(
+        asset: Asset,
+        createdSong: Song? = nil,
+        events: [CreativeEvent] = [],
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
+        try database.dbQueue.write { db in
+            if let createdSong { try saveSong(createdSong, in: db) }
+            try AssetRecord(asset).save(db)
+            for event in events { try EventRecord(event).save(db) }
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
+        }
+    }
+
     func persistCanonicalSync(_ applied: [CanonicalSync.AppliedChange], catalog: ArtistCatalog) throws {
         try database.dbQueue.write { db in
             for change in applied {
@@ -292,7 +308,12 @@ final class CatalogStore {
     func delete(masterCompositionID: UUID) throws { _ = try database.dbQueue.write { db in try MasterCompositionRecord.filter(Column("id") == masterCompositionID).deleteAll(db) } }
 
     func watchedFolders() -> [WatchedFolder] {
-        (try? database.dbQueue.read { db in try WatchedFolderRecord.order(Column("addedAt")).fetchAll(db).map { $0.toDomain() } }) ?? []
+        (try? database.dbQueue.read { db in
+            try WatchedFolderRecord
+                .order(Column("addedAt"))
+                .fetchAll(db)
+                .map { $0.toDomain() }
+        }) ?? []
     }
 
     func save(watchedFolder: WatchedFolder) throws {

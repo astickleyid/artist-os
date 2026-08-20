@@ -16,27 +16,19 @@ struct FilenameReanalysisPlan: Equatable {
 
 @MainActor
 extension AppState {
-    /// Runs the legacy filename regrouping pass only when it cannot move an Asset
-    /// that canonical Master Composition currently references or delete a Song
-    /// whose canonical composition still contains current asset references.
-    ///
-    /// This is intentionally conservative while `reanalyzeCatalog()` still owns
-    /// the regroup implementation. Canonical truth wins over compatibility Song
-    /// mirrors, so an unsafe pass is skipped rather than risking catalog damage.
+    /// Applies filename intelligence selectively: canonical Master Composition
+    /// references stay in place while safe candidates are regrouped. Returning
+    /// false means some candidates were intentionally protected, not that the
+    /// entire pass was discarded.
     @discardableResult
     func reanalyzeCatalogSafely() -> Bool {
-        guard canRunFilenameReanalysisSafely() else { return false }
-        reanalyzeCatalog()
-        return true
+        let plan = filenameReanalysisPlan()
+        applyFilenameReanalysis(plan)
+        return plan.blockedAssetIDs.isEmpty
     }
 
     /// Produces a mutation-free plan that separates filename regroup candidates
     /// from assets that canonical truth requires Artist OS to keep in place.
-    ///
-    /// The current legacy regroup pass is still all-or-nothing, so any blocked
-    /// candidate prevents that pass from running. `movableAssetIDs` is retained
-    /// explicitly so a later selective canonical regroup implementation can move
-    /// safe assets without re-deriving safety from compatibility mirrors.
     func filenameReanalysisPlan() -> FilenameReanalysisPlan {
         struct CandidateMove {
             let assetID: UUID
@@ -67,10 +59,10 @@ extension AppState {
             canonicalCompositionReferencesAsset(move.assetID) ? move.assetID : nil
         })
 
-        // For a future selective pass, canonically protected candidates remain in
-        // their current Song. Only block the rest of a Song's candidate moves when
-        // moving every otherwise-safe owned Asset could leave a canonically
-        // meaningful Song with no owned evidence at all.
+        // Canonically protected candidates remain in their current Song. Only
+        // block the rest of a Song's candidate moves when moving every otherwise-
+        // safe owned Asset could leave a canonically meaningful Song with no owned
+        // evidence at all.
         let movesBySong = Dictionary(grouping: candidateMoves, by: \.homeSongID)
         for (songID, moves) in movesBySong {
             let candidateIDsForSong = Set(moves.map(\.assetID))
@@ -90,10 +82,120 @@ extension AppState {
         )
     }
 
-    /// Internal for regression coverage. Returns false when the current legacy
-    /// regroup algorithm could contradict canonical Master Composition truth.
+    /// Retained while the legacy all-or-nothing implementation exists for
+    /// compatibility and regression coverage.
     func canRunFilenameReanalysisSafely() -> Bool {
         filenameReanalysisPlan().canRunLegacyPass
+    }
+
+    private func applyFilenameReanalysis(_ plan: FilenameReanalysisPlan) {
+        var touchedSongIDs = Set<UUID>()
+        var queuedSync = false
+
+        // Version labels are metadata intelligence, not ownership changes, so they
+        // remain safe even for assets whose canonical references block regrouping.
+        for assetID in catalog.assets.map(\.id) {
+            guard let index = catalog.assets.firstIndex(where: { $0.id == assetID }) else { continue }
+            let current = catalog.assets[index]
+            let parsed = VersionIntelligence.parse(current.originalFilename)
+            guard current.version != parsed.label || current.vOrder != parsed.order else { continue }
+
+            var updated = current
+            updated.version = parsed.label
+            updated.vOrder = parsed.order
+            updated.updatedAt = Date()
+            let syncChanges = syncStatus == .on ? [SyncLogic.change(forAsset: updated)] : []
+            do {
+                try store.commitFilenameReanalysis(asset: updated, syncChanges: syncChanges)
+                catalog.assets[index] = updated
+                queuedSync = queuedSync || !syncChanges.isEmpty
+            } catch {
+                // Persistence failure must not leave memory claiming a write that
+                // SQLite rejected. Continue with unrelated assets safely.
+                continue
+            }
+        }
+
+        for assetID in plan.movableAssetIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+            guard let index = catalog.assets.firstIndex(where: { $0.id == assetID }),
+                  let homeID = catalog.assets[index].songID,
+                  let home = catalog.songs.first(where: { $0.id == homeID })
+            else { continue }
+
+            let current = catalog.assets[index]
+            let parsed = VersionIntelligence.parse(current.originalFilename)
+            guard home.title.caseInsensitiveCompare(parsed.canonical) != .orderedSame else { continue }
+
+            let createdSong: Song?
+            let targetID: UUID
+            if let existing = catalog.songs.first(where: {
+                $0.title.caseInsensitiveCompare(parsed.canonical) == .orderedSame
+            }) {
+                createdSong = nil
+                targetID = existing.id
+            } else {
+                let song = ImportService.makeSong(title: parsed.canonical)
+                createdSong = song
+                targetID = song.id
+            }
+
+            var moved = current
+            moved.songID = targetID
+            moved.updatedAt = Date()
+
+            var events: [CreativeEvent] = []
+            if let createdSong {
+                events.append(
+                    CreativeEvent(
+                        id: UUID(), songID: createdSong.id, timestamp: Date(),
+                        target: .song, operation: .imported,
+                        beforeAssetID: nil, afterAssetID: nil,
+                        summary: "\(createdSong.title) created during filename re-analysis.",
+                        confidence: 1.0
+                    )
+                )
+            }
+            events.append(
+                CreativeEvent(
+                    id: UUID(), songID: targetID, timestamp: Date(),
+                    target: filenameTarget(for: moved.role), operation: .imported,
+                    beforeAssetID: nil, afterAssetID: moved.id,
+                    summary: "\(moved.originalFilename) regrouped into song (re-analysis).",
+                    confidence: 1.0
+                )
+            )
+
+            var syncChanges: [SyncLogic.JSONDict] = []
+            if syncStatus == .on {
+                if let createdSong { syncChanges.append(SyncLogic.change(forSong: createdSong)) }
+                syncChanges.append(SyncLogic.change(forAsset: moved))
+                syncChanges.append(contentsOf: events.map(SyncLogic.change(forEvent:)))
+            }
+
+            do {
+                try store.commitFilenameReanalysis(
+                    asset: moved,
+                    createdSong: createdSong,
+                    events: events,
+                    syncChanges: syncChanges
+                )
+                if let createdSong { catalog.songs.append(createdSong) }
+                catalog.assets[index] = moved
+                catalog.events.append(contentsOf: events)
+                queuedSync = queuedSync || !syncChanges.isEmpty
+                touchedSongIDs.insert(homeID)
+                touchedSongIDs.insert(targetID)
+            } catch {
+                continue
+            }
+        }
+
+        if !touchedSongIDs.isEmpty {
+            runDecisionEngine(songIDs: Array(touchedSongIDs))
+        }
+        if queuedSync {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
     private func canonicalCompositionReferencesAsset(_ assetID: UUID) -> Bool {
@@ -115,6 +217,17 @@ extension AppState {
         if composition.outputAssetID != nil { return true }
         return composition.sections.contains {
             $0.selection(.sourceAsset) != nil
+        }
+    }
+
+    private func filenameTarget(for role: AssetRole) -> EventTarget {
+        switch role {
+        case .fullMix: return .mix
+        case .leadVocal: return .leadVocal
+        case .beat: return .beat
+        case .hook: return .hook
+        case .bridge: return .bridge
+        case .reference: return .song
         }
     }
 }
