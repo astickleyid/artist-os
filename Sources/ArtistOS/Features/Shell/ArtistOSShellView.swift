@@ -61,7 +61,6 @@ struct SongListColumn: View {
 
     @State private var renamingSong: Song?
     @State private var renameDraft = ""
-    @State private var deletingSong: Song?
 
     var filteredSongs: [Song] {
         guard !state.searchText.isEmpty else { return state.catalog.songs }
@@ -88,10 +87,6 @@ struct SongListColumn: View {
                             renameDraft = song.title
                             renamingSong = song
                         }
-                        Divider()
-                        Button("Delete Song…", role: .destructive) {
-                            deletingSong = song
-                        }
                     }
                 }
             }
@@ -110,24 +105,6 @@ struct SongListColumn: View {
                 renamingSong = nil
             }
             Button("Cancel", role: .cancel) { renamingSong = nil }
-        }
-        .confirmationDialog(
-            "Delete \u{201C}\(deletingSong?.title ?? "")\u{201D}?",
-            isPresented: Binding(
-                get: { deletingSong != nil },
-                set: { if !$0 { deletingSong = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete Song and Its Assets", role: .destructive) {
-                if let song = deletingSong {
-                    state.deleteSong(id: song.id)
-                }
-                deletingSong = nil
-            }
-            Button("Cancel", role: .cancel) { deletingSong = nil }
-        } message: {
-            Text("Removes the song, its assets, and its change history from the catalog. Files on disk are not touched.")
         }
     }
 
