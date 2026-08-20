@@ -169,6 +169,52 @@ final class MasterCompositionEditingTests: XCTestCase {
         XCTAssertNil(state.catalog.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID })
     }
 
+    func testClearingCanonicalEmptySourceHealsStaleLegacyMirrorWithoutHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Heal Empty Canonical")
+
+        let song = try XCTUnwrap(state.catalog.songs.first)
+        let sectionID = song.sections[0].id
+        let asset = Asset(
+            id: UUID(),
+            title: "Old Mirror Source",
+            originalFilename: "old-mirror.wav",
+            role: .leadVocal,
+            createdAt: Date(),
+            duration: nil,
+            localURLBookmark: nil,
+            songID: song.id
+        )
+        state.catalog.assets.append(asset)
+        try store.insert(asset: asset)
+
+        state.approveSectionDecision(sectionID: sectionID, songID: song.id, winner: asset.id)
+        state.clearCanonicalSectionSource(sectionID: sectionID, songID: song.id)
+
+        let decisionsBeforeHealing = state.catalog.decisions.count
+        let eventsBeforeHealing = state.catalog.events.count
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == song.id })
+        let sectionIndex = try XCTUnwrap(state.catalog.songs[songIndex].sections.firstIndex { $0.id == sectionID })
+        state.catalog.songs[songIndex].sections[sectionIndex].assetID = asset.id
+        try store.upsert(song: state.catalog.songs[songIndex])
+
+        state.clearCanonicalSectionSource(sectionID: sectionID, songID: song.id)
+
+        let healedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == song.id })
+        XCTAssertNil(healedSong.sections.first { $0.id == sectionID }?.assetID)
+        XCTAssertEqual(state.catalog.events.count, eventsBeforeHealing)
+        XCTAssertEqual(state.catalog.decisions.count, decisionsBeforeHealing)
+
+        let canonical = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == song.id })
+        XCTAssertNil(canonical.sections.first { $0.id == sectionID }?.selection(.sourceAsset))
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertNil(reloaded.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID }?.assetID)
+        XCTAssertEqual(reloaded.events.count, eventsBeforeHealing)
+        XCTAssertEqual(reloaded.decisions.count, decisionsBeforeHealing)
+    }
+
     func testClearingEmptySourceDoesNotCreateHistory() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
