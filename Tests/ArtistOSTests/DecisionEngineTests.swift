@@ -49,6 +49,43 @@ final class DecisionEngineTests: XCTestCase {
         XCTAssertTrue(decisions.first?.detail.contains("challenges") ?? false)
     }
 
+    func testCanonicalDecisionProjectionOverridesLegacyMirrors() {
+        var song = ImportService.makeSong(title: "T")
+        let v1 = asset(.fullMix, "v1", 1, songID: song.id)
+        let v2 = asset(.fullMix, "v2", 2, songID: song.id)
+
+        // Legacy mirrors say everything is resolved.
+        song.sections[2].state = .locked
+        song.masterAssetID = v2.id
+        XCTAssertTrue(VersionIntelligence.decisions(for: song, assets: [v1, v2]).isEmpty)
+
+        // Canonical truth says the hook and master both require a decision.
+        var composition = MasterComposition.projected(from: song)
+        composition.sections[2].state = .needsDecision
+        composition.outputAssetID = v1.id
+        var canonical = VersionIntelligence.decisions(
+            for: song,
+            masterComposition: composition,
+            assets: [v1, v2]
+        )
+        XCTAssertEqual(canonical.count, 2)
+        XCTAssertEqual(canonical.filter { $0.kind == .slot }.count, 1)
+        XCTAssertEqual(canonical.filter { $0.kind == .master }.count, 1)
+
+        // Reverse the divergence: stale legacy mirrors must not create phantom decisions.
+        song.sections[2].state = .needsDecision
+        song.masterAssetID = v1.id
+        composition.sections[2].state = .locked
+        composition.outputAssetID = v2.id
+        canonical = VersionIntelligence.decisions(
+            for: song,
+            masterComposition: composition,
+            assets: [v1, v2]
+        )
+        XCTAssertTrue(canonical.isEmpty)
+        XCTAssertEqual(VersionIntelligence.decisions(for: song, assets: [v1, v2]).count, 2)
+    }
+
     @MainActor
     func testEnginePersistsFlagsAndPinning() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
