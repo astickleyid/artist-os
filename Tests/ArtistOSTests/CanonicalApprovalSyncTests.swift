@@ -11,8 +11,8 @@ final class CanonicalApprovalSyncTests: XCTestCase {
     func testSectionApprovalPushesDecisionAndMasterCompositionWithFacts() async throws {
         let fake = FakeHTTPClient(script: [
             .init(json: ["accountId": "acc1", "token": "tok1"], status: 201),
-            .init(json: ["applied": 3, "skipped": 0, "seq": 3]),
-            .init(json: ["applied": 5, "skipped": 0, "seq": 8])
+            .init(json: ["applied": 5, "skipped": 0, "seq": 5]),
+            .init(json: ["applied": 5, "skipped": 0, "seq": 10])
         ])
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(
@@ -36,7 +36,7 @@ final class CanonicalApprovalSyncTests: XCTestCase {
         state.catalog.assets.append(contentsOf: [winner, loser])
         try store.insert(asset: winner)
         try store.insert(asset: loser)
-        state.setState(.needsDecision, sectionID: sectionID, songID: song.id)
+        state.setCanonicalSectionState(.needsDecision, sectionID: sectionID, songID: song.id)
 
         await state.enableSync()
         XCTAssertEqual(state.syncStatus, .on)
