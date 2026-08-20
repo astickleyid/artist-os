@@ -217,9 +217,15 @@ public enum VersionIntelligence {
         }
     }
 
-    public static func decisions(for song: Song, assets: [Asset]) -> [Decision] {
+    /// Canonical decision-inbox projection. Current slot and master state must
+    /// come from Master Composition; Song fields are compatibility data only.
+    public static func decisions(
+        for song: Song,
+        masterComposition: MasterComposition,
+        assets: [Asset]
+    ) -> [Decision] {
         var out: [Decision] = []
-        for section in song.sections where section.state == .needsDecision {
+        for section in masterComposition.sections where section.state == .needsDecision {
             out.append(Decision(
                 id: "slot-\(section.id.uuidString)",
                 kind: .slot, songID: song.id, sectionID: section.id,
@@ -230,14 +236,15 @@ public enum VersionIntelligence {
         let stack = masterStack(assets)
         if stack.count >= 2 {
             let top = stack[0]
-            if song.masterAssetID == nil {
+            let currentMasterID = masterComposition.outputAssetID
+            if currentMasterID == nil {
                 out.append(Decision(
                     id: "master-\(song.id.uuidString)",
                     kind: .master, songID: song.id, sectionID: nil,
                     title: "Current master — \(song.title)",
                     detail: "\(stack.count) versions stacked, none pinned as master"
                 ))
-            } else if song.masterAssetID != top.id, stack.contains(where: { $0.id == song.masterAssetID }) {
+            } else if currentMasterID != top.id, stack.contains(where: { $0.id == currentMasterID }) {
                 out.append(Decision(
                     id: "master-\(song.id.uuidString)",
                     kind: .master, songID: song.id, sectionID: nil,
@@ -247,5 +254,14 @@ public enum VersionIntelligence {
             }
         }
         return out
+    }
+
+    /// Backward-compatible projection for legacy callers and shared logic tests.
+    public static func decisions(for song: Song, assets: [Asset]) -> [Decision] {
+        decisions(
+            for: song,
+            masterComposition: MasterComposition.projected(from: song),
+            assets: assets
+        )
     }
 }
