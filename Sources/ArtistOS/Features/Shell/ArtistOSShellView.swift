@@ -133,7 +133,7 @@ struct SongListColumn: View {
 
     @ViewBuilder
     private var decideInbox: some View {
-        let decisions = state.catalog.songs.flatMap { song in
+        let decisions: [VersionIntelligence.Decision] = state.catalog.songs.flatMap { song -> [VersionIntelligence.Decision] in
             guard let composition = state.catalog.masterComposition(for: song.id) else { return [] }
             return VersionIntelligence.decisions(
                 for: song,
