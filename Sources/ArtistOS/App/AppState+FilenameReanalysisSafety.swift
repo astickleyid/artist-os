@@ -89,8 +89,8 @@ extension AppState {
     }
 
     private func applyFilenameReanalysis(_ plan: FilenameReanalysisPlan) {
-        var syncChanges: [SyncLogic.JSONDict] = []
         var touchedSongIDs = Set<UUID>()
+        var queuedSync = false
 
         // Version labels are metadata intelligence, not ownership changes, so they
         // remain safe even for assets whose canonical references block regrouping.
@@ -104,10 +104,11 @@ extension AppState {
             updated.version = parsed.label
             updated.vOrder = parsed.order
             updated.updatedAt = Date()
+            let syncChanges = syncStatus == .on ? [SyncLogic.change(forAsset: updated)] : []
             do {
-                try store.insert(asset: updated)
+                try store.commitFilenameReanalysis(asset: updated, syncChanges: syncChanges)
                 catalog.assets[index] = updated
-                if syncStatus == .on { syncChanges.append(SyncLogic.change(forAsset: updated)) }
+                queuedSync = queuedSync || !syncChanges.isEmpty
             } catch {
                 // Persistence failure must not leave memory claiming a write that
                 // SQLite rejected. Continue with unrelated assets safely.
@@ -125,52 +126,63 @@ extension AppState {
             let parsed = VersionIntelligence.parse(current.originalFilename)
             guard home.title.caseInsensitiveCompare(parsed.canonical) != .orderedSame else { continue }
 
+            let createdSong: Song?
             let targetID: UUID
             if let existing = catalog.songs.first(where: {
                 $0.title.caseInsensitiveCompare(parsed.canonical) == .orderedSame
             }) {
+                createdSong = nil
                 targetID = existing.id
             } else {
                 let song = ImportService.makeSong(title: parsed.canonical)
-                do {
-                    try store.upsert(song: song)
-                    catalog.songs.append(song)
-                    targetID = song.id
-                    if syncStatus == .on { syncChanges.append(SyncLogic.change(forSong: song)) }
-
-                    let event = CreativeEvent(
-                        id: UUID(), songID: song.id, timestamp: Date(),
-                        target: .song, operation: .imported,
-                        beforeAssetID: nil, afterAssetID: nil,
-                        summary: "\(song.title) created during filename re-analysis.",
-                        confidence: 1.0
-                    )
-                    try store.append(event: event)
-                    catalog.events.append(event)
-                    if syncStatus == .on { syncChanges.append(SyncLogic.change(forEvent: event)) }
-                } catch {
-                    continue
-                }
+                createdSong = song
+                targetID = song.id
             }
 
             var moved = current
             moved.songID = targetID
             moved.updatedAt = Date()
-            do {
-                try store.insert(asset: moved)
-                catalog.assets[index] = moved
-                if syncStatus == .on { syncChanges.append(SyncLogic.change(forAsset: moved)) }
 
-                let event = CreativeEvent(
+            var events: [CreativeEvent] = []
+            if let createdSong {
+                events.append(
+                    CreativeEvent(
+                        id: UUID(), songID: createdSong.id, timestamp: Date(),
+                        target: .song, operation: .imported,
+                        beforeAssetID: nil, afterAssetID: nil,
+                        summary: "\(createdSong.title) created during filename re-analysis.",
+                        confidence: 1.0
+                    )
+                )
+            }
+            events.append(
+                CreativeEvent(
                     id: UUID(), songID: targetID, timestamp: Date(),
                     target: filenameTarget(for: moved.role), operation: .imported,
                     beforeAssetID: nil, afterAssetID: moved.id,
                     summary: "\(moved.originalFilename) regrouped into song (re-analysis).",
                     confidence: 1.0
                 )
-                try store.append(event: event)
-                catalog.events.append(event)
-                if syncStatus == .on { syncChanges.append(SyncLogic.change(forEvent: event)) }
+            )
+
+            var syncChanges: [SyncLogic.JSONDict] = []
+            if syncStatus == .on {
+                if let createdSong { syncChanges.append(SyncLogic.change(forSong: createdSong)) }
+                syncChanges.append(SyncLogic.change(forAsset: moved))
+                syncChanges.append(contentsOf: events.map(SyncLogic.change(forEvent:)))
+            }
+
+            do {
+                try store.commitFilenameReanalysis(
+                    asset: moved,
+                    createdSong: createdSong,
+                    events: events,
+                    syncChanges: syncChanges
+                )
+                if let createdSong { catalog.songs.append(createdSong) }
+                catalog.assets[index] = moved
+                catalog.events.append(contentsOf: events)
+                queuedSync = queuedSync || !syncChanges.isEmpty
                 touchedSongIDs.insert(homeID)
                 touchedSongIDs.insert(targetID)
             } catch {
@@ -181,8 +193,8 @@ extension AppState {
         if !touchedSongIDs.isEmpty {
             runDecisionEngine(songIDs: Array(touchedSongIDs))
         }
-        if !syncChanges.isEmpty {
-            scheduleCanonicalSync(syncChanges)
+        if queuedSync {
+            resumeCanonicalSyncOutbox()
         }
     }
 
