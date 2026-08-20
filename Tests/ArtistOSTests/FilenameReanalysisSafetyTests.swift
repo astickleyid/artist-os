@@ -105,6 +105,66 @@ final class FilenameReanalysisSafetyTests: XCTestCase {
         )
     }
 
+    func testPlanSeparatesProtectedAndMovableCandidates() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Home")
+        state.createSong(title: "Other")
+
+        let homeID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Home" })?.id)
+        let otherID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Other" })?.id)
+        let protected = makeAsset(filename: "protected target v2.wav", role: .hook, songID: homeID)
+        let movable = makeAsset(filename: "safe target v3.wav", role: .reference, songID: homeID)
+        state.catalog.assets.append(contentsOf: [protected, movable])
+        try store.insert(asset: protected)
+        try store.insert(asset: movable)
+
+        var otherComposition = try XCTUnwrap(state.catalog.masterComposition(for: otherID))
+        let sectionIndex = try XCTUnwrap(otherComposition.sections.indices.first)
+        otherComposition.sections[sectionIndex].setSelection(
+            MasterSelection(kind: .sourceAsset, referenceID: protected.id)
+        )
+        state.catalog.setMasterComposition(otherComposition)
+        try store.upsert(masterComposition: otherComposition)
+
+        let plan = state.filenameReanalysisPlan()
+
+        XCTAssertEqual(plan.candidateAssetIDs, Set([protected.id, movable.id]))
+        XCTAssertEqual(plan.blockedAssetIDs, Set([protected.id]))
+        XCTAssertEqual(plan.movableAssetIDs, Set([movable.id]))
+        XCTAssertFalse(plan.canRunLegacyPass)
+    }
+
+    func testPlanBlocksLastMovableOwnedAssetWhenCanonicalSongStillReferencesExternalAsset() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Home")
+        state.createSong(title: "Other")
+
+        let homeID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Home" })?.id)
+        let otherID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Other" })?.id)
+        let candidate = makeAsset(filename: "target song v2.wav", role: .reference, songID: homeID)
+        let external = makeAsset(filename: "Other.wav", role: .hook, songID: otherID)
+        state.catalog.assets.append(contentsOf: [candidate, external])
+        try store.insert(asset: candidate)
+        try store.insert(asset: external)
+
+        var homeComposition = try XCTUnwrap(state.catalog.masterComposition(for: homeID))
+        let sectionIndex = try XCTUnwrap(homeComposition.sections.indices.first)
+        homeComposition.sections[sectionIndex].setSelection(
+            MasterSelection(kind: .sourceAsset, referenceID: external.id)
+        )
+        state.catalog.setMasterComposition(homeComposition)
+        try store.upsert(masterComposition: homeComposition)
+
+        let plan = state.filenameReanalysisPlan()
+
+        XCTAssertEqual(plan.candidateAssetIDs, Set([candidate.id]))
+        XCTAssertEqual(plan.blockedAssetIDs, Set([candidate.id]))
+        XCTAssertTrue(plan.movableAssetIDs.isEmpty)
+        XCTAssertFalse(plan.canRunLegacyPass)
+    }
+
     func testPreflightAllowsUnreferencedFilenameRegrouping() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
