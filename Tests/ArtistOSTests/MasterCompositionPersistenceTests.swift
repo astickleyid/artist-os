@@ -158,6 +158,43 @@ final class MasterCompositionPersistenceTests: XCTestCase {
         XCTAssertEqual(projected.sections[0].state, .locked)
     }
 
+    func testLegacySQLiteSongProjectsCompleteCanonicalComposition() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        var song = ImportService.makeSong(title: "Legacy SQLite")
+        let sectionID = song.sections[0].id
+        let sourceID = UUID()
+        let outputID = UUID()
+        let updatedAt = Date(timeIntervalSince1970: 1_801_234_567.25)
+
+        song.sections[0].name = "Final Hook"
+        song.sections[0].role = "Lead Vocal"
+        song.sections[0].assetID = sourceID
+        song.sections[0].state = .needsDecision
+        song.sections[0].confidence = 0.73
+        song.sections[0].note = "Keep the rasp from take 7"
+        song.masterAssetID = outputID
+        song.updatedAt = updatedAt
+        try store.upsert(song: song)
+
+        let loaded = store.loadCatalog(artistName: "T")
+        XCTAssertTrue(loaded.masterCompositions.isEmpty)
+
+        let projected = try XCTUnwrap(loaded.masterComposition(for: song.id))
+        XCTAssertEqual(projected.id, song.id)
+        XCTAssertEqual(projected.songID, song.id)
+        XCTAssertEqual(projected.outputAssetID, outputID)
+        assertDateEqual(projected.updatedAt, updatedAt)
+        XCTAssertEqual(projected.sections.count, song.sections.count)
+
+        let section = try XCTUnwrap(projected.sections.first { $0.id == sectionID })
+        XCTAssertEqual(section.name, "Final Hook")
+        XCTAssertEqual(section.role, "Lead Vocal")
+        XCTAssertEqual(section.selection(.sourceAsset)?.referenceID, sourceID)
+        XCTAssertEqual(section.state, .needsDecision)
+        XCTAssertEqual(section.confidence, 0.73, accuracy: 0.0001)
+        XCTAssertEqual(section.note, "Keep the rasp from take 7")
+    }
+
     func testPersistedCompositionWinsOverLegacyProjection() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         var song = ImportService.makeSong(title: "Canonical Wins")
