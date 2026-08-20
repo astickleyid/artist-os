@@ -34,6 +34,56 @@ final class CatalogMasterCompositionTests: XCTestCase {
         XCTAssertEqual(projected.songID, songID)
     }
 
+    func testLegacySongProjectsCompleteCanonicalMasterState() throws {
+        let songID = UUID()
+        let sectionID = UUID()
+        let sourceAssetID = UUID()
+        let masterAssetID = UUID()
+        let updatedAt = Date(timeIntervalSince1970: 123)
+        let legacySection = MasterSection(
+            id: sectionID,
+            name: "Hook",
+            role: "Hook",
+            assetID: sourceAssetID,
+            state: .candidate,
+            confidence: 0.73,
+            note: "Keep the first vocal take."
+        )
+        let song = Song(
+            id: songID,
+            title: "Legacy Projection",
+            era: "Imported",
+            status: .assembling,
+            progress: 0.2,
+            qualityScore: 0.5,
+            risk: "",
+            sections: [legacySection],
+            masterAssetID: masterAssetID,
+            updatedAt: updatedAt
+        )
+        let catalog = ArtistCatalog(
+            artistName: "T",
+            songs: [song],
+            assets: [],
+            events: [],
+            masterCompositions: []
+        )
+
+        let projected = try XCTUnwrap(catalog.masterComposition(for: songID))
+        let section = try XCTUnwrap(projected.sections.first)
+
+        XCTAssertEqual(projected.songID, songID)
+        XCTAssertEqual(projected.outputAssetID, masterAssetID)
+        XCTAssertEqual(projected.updatedAt, updatedAt)
+        XCTAssertEqual(section.id, sectionID)
+        XCTAssertEqual(section.name, legacySection.name)
+        XCTAssertEqual(section.role, legacySection.role)
+        XCTAssertEqual(section.selection(.sourceAsset)?.referenceID, sourceAssetID)
+        XCTAssertEqual(section.state, legacySection.state)
+        XCTAssertEqual(section.confidence, legacySection.confidence, accuracy: 0.0001)
+        XCTAssertEqual(section.note, legacySection.note)
+    }
+
     func testPersistedMasterCompositionWinsCatalogLookup() throws {
         let legacyMasterID = UUID()
         let canonicalMasterID = UUID()
