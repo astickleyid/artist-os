@@ -39,10 +39,10 @@ extension AppState {
 
         guard !candidateMoves.isEmpty else { return true }
 
-        for move in candidateMoves where canonicalComposition(
-            songID: move.homeSongID,
-            references: move.assetID
-        ) {
+        // Asset ownership is compatibility metadata during migration. A stale
+        // `songID` must not let filename regrouping move an Asset that any Song's
+        // canonical Master Composition currently references.
+        for move in candidateMoves where canonicalCompositionReferencesAsset(move.assetID) {
             return false
         }
 
@@ -59,6 +59,12 @@ extension AppState {
         }
 
         return true
+    }
+
+    private func canonicalCompositionReferencesAsset(_ assetID: UUID) -> Bool {
+        catalog.songs.contains { song in
+            canonicalComposition(songID: song.id, references: assetID)
+        }
     }
 
     private func canonicalComposition(songID: UUID, references assetID: UUID) -> Bool {
