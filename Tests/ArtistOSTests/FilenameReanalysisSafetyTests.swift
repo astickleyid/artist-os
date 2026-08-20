@@ -73,6 +73,38 @@ final class FilenameReanalysisSafetyTests: XCTestCase {
         XCTAssertEqual(state.catalog.assets.first(where: { $0.id == asset.id })?.songID, songID)
     }
 
+    func testPreflightBlocksAssetReferencedByDifferentCanonicalSong() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Home")
+        state.createSong(title: "Other")
+
+        let homeID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Home" })?.id)
+        let otherID = try XCTUnwrap(state.catalog.songs.first(where: { $0.title == "Other" })?.id)
+        let asset = makeAsset(filename: "target song v2.wav", role: .hook, songID: homeID)
+        state.catalog.assets.append(asset)
+        try store.insert(asset: asset)
+
+        var otherComposition = try XCTUnwrap(state.catalog.masterComposition(for: otherID))
+        let sectionIndex = try XCTUnwrap(otherComposition.sections.indices.first)
+        otherComposition.sections[sectionIndex].setSelection(
+            MasterSelection(kind: .sourceAsset, referenceID: asset.id)
+        )
+        state.catalog.setMasterComposition(otherComposition)
+        try store.upsert(masterComposition: otherComposition)
+
+        XCTAssertTrue(state.catalog.songs.first(where: { $0.id == homeID })?.sections.allSatisfy { $0.assetID == nil } == true)
+        XCTAssertFalse(state.canRunFilenameReanalysisSafely())
+
+        state.reanalyzeCatalogSafely()
+
+        XCTAssertEqual(state.catalog.assets.first(where: { $0.id == asset.id })?.songID, homeID)
+        XCTAssertEqual(
+            state.catalog.masterComposition(for: otherID)?.sections[sectionIndex].selection(.sourceAsset)?.referenceID,
+            asset.id
+        )
+    }
+
     func testPreflightAllowsUnreferencedFilenameRegrouping() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
