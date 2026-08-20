@@ -20,6 +20,9 @@ struct CompareSheet: View {
     private var candidates: [Asset] {
         isMasterMode ? state.masterStack(for: song.id) : state.assets(for: song.id)
     }
+    private var currentMasterAssetID: UUID? {
+        state.catalog.masterComposition(for: song.id)?.outputAssetID
+    }
     private var assetA: Asset? { state.asset(id: assetAID) }
     private var assetB: Asset? { state.asset(id: assetBID) }
 
@@ -153,7 +156,7 @@ struct CompareSheet: View {
         let ids = candidates.map(\.id)
         if isMasterMode {
             assetBID = ids.first
-            assetAID = (song.masterAssetID.flatMap { m in ids.contains(m) ? m : nil })
+            assetAID = (currentMasterAssetID.flatMap { m in ids.contains(m) ? m : nil })
                 ?? ids.first { $0 != assetBID } ?? ids.first
         } else {
             assetAID = section?.assetID ?? ids.first
