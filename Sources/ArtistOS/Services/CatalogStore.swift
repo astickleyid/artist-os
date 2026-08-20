@@ -108,6 +108,16 @@ final class CatalogStore {
         try database.dbQueue.write { db in try replaceMasterComposition(masterComposition, in: db) }
     }
 
+    func commitSongCompatibilityMirror(
+        song: Song,
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
+        try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
+        }
+    }
+
     func commitMasterAnnotation(
         song: Song,
         masterComposition: MasterComposition,

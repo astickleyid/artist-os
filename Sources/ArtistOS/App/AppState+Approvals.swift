@@ -143,7 +143,28 @@ extension AppState {
         var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         let oldMasterID = composition.outputAssetID
-        guard oldMasterID != assetID else { return }
+
+        if oldMasterID == assetID {
+            guard catalog.songs[songIndex].masterAssetID != assetID else { return }
+            var updatedSong = catalog.songs[songIndex]
+            updatedSong.masterAssetID = assetID
+            updatedSong.updatedAt = Date()
+            let syncChanges = syncStatus == .on ? [SyncLogic.change(forSong: updatedSong)] : []
+            do {
+                try store.commitSongCompatibilityMirror(
+                    song: updatedSong,
+                    syncChanges: syncChanges
+                )
+            } catch {
+                approvalLogger.error("Master compatibility repair failed: \(error.localizedDescription)")
+                return
+            }
+            catalog.songs[songIndex] = updatedSong
+            if !syncChanges.isEmpty {
+                resumeCanonicalSyncOutbox()
+            }
+            return
+        }
 
         let timestamp = Date()
         var updatedSong = catalog.songs[songIndex]
