@@ -10,9 +10,11 @@ extension AppState {
     /// This is intentionally conservative while `reanalyzeCatalog()` still owns
     /// the regroup implementation. Canonical truth wins over compatibility Song
     /// mirrors, so an unsafe pass is skipped rather than risking catalog damage.
-    func reanalyzeCatalogSafely() {
-        guard canRunFilenameReanalysisSafely() else { return }
+    @discardableResult
+    func reanalyzeCatalogSafely() -> Bool {
+        guard canRunFilenameReanalysisSafely() else { return false }
         reanalyzeCatalog()
+        return true
     }
 
     /// Internal for regression coverage. Returns false when the current legacy
