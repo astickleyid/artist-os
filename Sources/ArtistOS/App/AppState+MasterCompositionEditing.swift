@@ -15,16 +15,21 @@ extension AppState {
     /// from silently mutating only Song.sections during the migration.
     func clearCanonicalSectionSource(sectionID: UUID, songID: UUID) {
         guard let songIndex = catalog.songs.firstIndex(where: { $0.id == songID }),
-              let sectionIndex = catalog.songs[songIndex].sections.firstIndex(where: { $0.id == sectionID })
+              let sectionIndex = catalog.songs[songIndex].sections.firstIndex(where: { $0.id == sectionID }),
+              var composition = catalog.masterComposition(for: songID),
+              let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
         else { return }
 
-        let oldSection = catalog.songs[songIndex].sections[sectionIndex]
-        let canonicalSourceID = catalog.masterComposition(for: songID)?
-            .sections.first(where: { $0.id == sectionID })?
-            .selection(.sourceAsset)?.referenceID
-        let legacySourceID = oldSection.assetID
-        let oldSourceID = canonicalSourceID ?? legacySourceID
-        guard oldSourceID != nil else { return }
+        let canonicalSection = composition.sections[compositionSectionIndex]
+        guard let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID else {
+            healLegacySectionMirrorIfNeeded(
+                songIndex: songIndex,
+                sectionIndex: sectionIndex,
+                canonicalSection: canonicalSection,
+                composition: composition
+            )
+            return
+        }
 
         let timestamp = Date()
         var updatedSong = catalog.songs[songIndex]
@@ -34,7 +39,7 @@ extension AppState {
         recomputeMasterProgress(&updatedSong)
         updatedSong.updatedAt = timestamp
 
-        let target = masterTarget(forSectionName: oldSection.name)
+        let target = masterTarget(forSectionName: canonicalSection.name)
         let event = CreativeEvent(
             id: UUID(),
             songID: songID,
@@ -43,14 +48,9 @@ extension AppState {
             operation: .structureUpdated,
             beforeAssetID: oldSourceID,
             afterAssetID: nil,
-            summary: "\(oldSection.name) source cleared.",
+            summary: "\(canonicalSection.name) source cleared.",
             confidence: 1
         )
-
-        var clearedSourceIDs: [UUID] = []
-        for id in [canonicalSourceID, legacySourceID].compactMap({ $0 }) where !clearedSourceIDs.contains(id) {
-            clearedSourceIDs.append(id)
-        }
 
         let decision = CreativeDecision(
             id: UUID(),
@@ -59,16 +59,12 @@ extension AppState {
             target: target,
             action: .reverted,
             selectedAssetID: nil,
-            rejectedAssetIDs: clearedSourceIDs,
+            rejectedAssetIDs: [oldSourceID],
             relatedEventIDs: [event.id],
             reason: nil,
             source: .artist
         )
 
-        var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
-            ?? MasterComposition.projected(from: catalog.songs[songIndex])
-        guard let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
         composition.sections[compositionSectionIndex].clearSelection(.sourceAsset)
         composition.sections[compositionSectionIndex].state = .open
         composition.sections[compositionSectionIndex].confidence = 0
@@ -166,9 +162,6 @@ extension AppState {
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         guard let canonicalIndex = composition.sections.firstIndex(where: { $0.id == sectionID }) else { return }
         let removed = composition.sections[canonicalIndex]
-        let legacySourceID = catalog.songs[songIndex].sections
-            .first(where: { $0.id == sectionID })?
-            .assetID
 
         let timestamp = Date()
         composition.sections.remove(at: canonicalIndex)
@@ -183,7 +176,7 @@ extension AppState {
         let canonicalSourceIDs = removed.selections.compactMap { selection -> UUID? in
             selection.kind == .sourceAsset ? selection.referenceID : nil
         }
-        for id in canonicalSourceIDs + [legacySourceID].compactMap({ $0 }) where !removedAssetIDs.contains(id) {
+        for id in canonicalSourceIDs where !removedAssetIDs.contains(id) {
             removedAssetIDs.append(id)
         }
 
@@ -218,6 +211,51 @@ extension AppState {
             composition: composition,
             failureMessage: "Remove master slot transaction failed"
         )
+    }
+
+    /// Canonical truth may already be empty while an old Song compatibility
+    /// mirror is stale. Heal that mirror without manufacturing creative history.
+    private func healLegacySectionMirrorIfNeeded(
+        songIndex: Int,
+        sectionIndex: Int,
+        canonicalSection: MasterCompositionSection,
+        composition: MasterComposition
+    ) {
+        let legacySection = catalog.songs[songIndex].sections[sectionIndex]
+        guard legacySection.assetID != nil
+                || legacySection.state != canonicalSection.state
+                || legacySection.confidence != canonicalSection.confidence
+        else { return }
+
+        let timestamp = Date()
+        var updatedSong = catalog.songs[songIndex]
+        updatedSong.sections[sectionIndex].assetID = nil
+        updatedSong.sections[sectionIndex].state = canonicalSection.state
+        updatedSong.sections[sectionIndex].confidence = canonicalSection.confidence
+        recomputeMasterProgress(&updatedSong)
+        updatedSong.updatedAt = timestamp
+
+        let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
+            ? [SyncLogic.change(forSong: updatedSong)]
+            : []
+
+        do {
+            try store.commitMasterAnnotation(
+                song: updatedSong,
+                masterComposition: composition,
+                syncChanges: syncChanges
+            )
+        } catch {
+            masterEditingLogger.error("Heal legacy master mirror failed: \(error.localizedDescription)")
+            return
+        }
+
+        catalog.songs[songIndex] = updatedSong
+        catalog.setMasterComposition(composition)
+
+        if !syncChanges.isEmpty {
+            resumeCanonicalSyncOutbox()
+        }
     }
 
     private func commitMasterEdit(
