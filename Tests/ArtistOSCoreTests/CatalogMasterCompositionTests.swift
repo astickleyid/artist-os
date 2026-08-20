@@ -35,6 +35,8 @@ final class CatalogMasterCompositionTests: XCTestCase {
     }
 
     func testPersistedMasterCompositionWinsCatalogLookup() throws {
+        let legacyMasterID = UUID()
+        let canonicalMasterID = UUID()
         let song = Song(
             id: UUID(),
             title: "Current",
@@ -44,12 +46,14 @@ final class CatalogMasterCompositionTests: XCTestCase {
             qualityScore: 0.5,
             risk: "",
             sections: [],
+            masterAssetID: legacyMasterID,
             updatedAt: Date(timeIntervalSince1970: 1)
         )
         let persisted = MasterComposition(
             id: UUID(),
             songID: song.id,
             sections: [],
+            outputAssetID: canonicalMasterID,
             updatedAt: Date(timeIntervalSince1970: 2)
         )
         let catalog = ArtistCatalog(
@@ -60,7 +64,10 @@ final class CatalogMasterCompositionTests: XCTestCase {
             masterCompositions: [persisted]
         )
 
-        XCTAssertEqual(catalog.masterComposition(for: song.id)?.id, persisted.id)
+        let resolved = try XCTUnwrap(catalog.masterComposition(for: song.id))
+        XCTAssertEqual(resolved.id, persisted.id)
+        XCTAssertEqual(resolved.outputAssetID, canonicalMasterID)
+        XCTAssertNotEqual(resolved.outputAssetID, legacyMasterID)
     }
 
     func testCatalogNormalizesDuplicateCanonicalTruthToNewestComposition() {

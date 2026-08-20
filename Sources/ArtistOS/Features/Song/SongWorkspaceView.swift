@@ -83,6 +83,10 @@ struct AssetGridView: View {
         return song.sections.compactMap { state.asset(id: $0.assetID) }
     }
 
+    private var currentMasterAssetID: UUID? {
+        state.catalog.masterComposition(for: song.id)?.outputAssetID
+    }
+
     var body: some View {
         if assets.isEmpty {
             Text("No assets yet. Import a folder to attach recordings, beats, and mixes to this song.")
@@ -110,7 +114,7 @@ struct AssetGridView: View {
                                 .frame(height: 26)
                             Text(asset.originalFilename).font(.caption).foregroundStyle(AOSTheme.muted).lineLimit(2)
                             HStack(spacing: 6) {
-                                if song.masterAssetID == asset.id {
+                                if currentMasterAssetID == asset.id {
                                     AOSBadge(text: "★ Master", tint: AOSTheme.gold)
                                 } else if assets.count > 1, assets.first?.id == asset.id,
                                           asset.version != nil || asset.vOrder != nil {
