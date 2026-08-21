@@ -112,6 +112,64 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(updatedSection.selection(.processingSnapshot)?.referenceID, processingID)
     }
 
+    func testSectionApprovalDerivesProgressAndRiskFromCanonicalComposition() throws {
+        let (state, store) = try makeState()
+        state.createSong(title: "Canonical Progress")
+        let originalSong = state.catalog.songs[0]
+        let approvedSectionID = originalSong.sections[0].id
+        let unresolvedSectionID = originalSong.sections[1].id
+        let winner = Asset(
+            id: UUID(), title: "Approved Take", originalFilename: "approved.wav", role: .leadVocal,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: originalSong.id
+        )
+        state.catalog.assets.append(winner)
+        try store.insert(asset: winner)
+
+        var composition = MasterComposition.projected(from: originalSong)
+        for index in composition.sections.indices {
+            composition.sections[index].state = .locked
+            composition.sections[index].confidence = 0.95
+        }
+        let approvedIndex = try XCTUnwrap(composition.sections.firstIndex { $0.id == approvedSectionID })
+        let unresolvedIndex = try XCTUnwrap(composition.sections.firstIndex { $0.id == unresolvedSectionID })
+        composition.sections[approvedIndex].state = .needsDecision
+        composition.sections[unresolvedIndex].state = .needsDecision
+        composition.updatedAt = Date()
+        state.catalog.setMasterComposition(composition)
+        try store.upsert(masterComposition: composition)
+
+        var staleLegacySong = originalSong
+        for index in staleLegacySong.sections.indices {
+            staleLegacySong.sections[index].state = .locked
+            staleLegacySong.sections[index].confidence = 1
+        }
+        staleLegacySong.progress = 1
+        staleLegacySong.risk = "Master locked"
+        staleLegacySong.updatedAt = composition.updatedAt
+        state.catalog.songs[0] = staleLegacySong
+        try store.upsert(song: staleLegacySong)
+
+        state.approveSectionDecision(
+            sectionID: approvedSectionID,
+            songID: originalSong.id,
+            winner: winner.id
+        )
+
+        let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == originalSong.id })
+        XCTAssertEqual(updatedSong.progress, 0.8, accuracy: 0.001)
+        XCTAssertEqual(updatedSong.risk, "\(composition.sections[unresolvedIndex].name) decision unresolved")
+        XCTAssertNotEqual(updatedSong.risk, "Master locked")
+
+        let updatedComposition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == originalSong.id })
+        XCTAssertEqual(updatedComposition.sections[approvedIndex].state, .locked)
+        XCTAssertEqual(updatedComposition.sections[unresolvedIndex].state, .needsDecision)
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        let persistedSong = try XCTUnwrap(reloaded.songs.first { $0.id == originalSong.id })
+        XCTAssertEqual(persistedSong.progress, 0.8, accuracy: 0.001)
+        XCTAssertEqual(persistedSong.risk, "\(composition.sections[unresolvedIndex].name) decision unresolved")
+    }
+
     func testMasterApprovalPersistsDecisionAndCanonicalOutput() throws {
         let (state, store) = try makeState()
         state.createSong(title: "Master Test")
