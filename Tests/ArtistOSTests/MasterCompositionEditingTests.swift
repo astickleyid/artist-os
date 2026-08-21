@@ -169,6 +169,41 @@ final class MasterCompositionEditingTests: XCTestCase {
         XCTAssertNil(state.catalog.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID })
     }
 
+    func testRemovingCanonicalSectionDerivesProgressFromCanonicalComposition() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Canonical Structural Progress")
+
+        let song = try XCTUnwrap(state.catalog.songs.first)
+        let removedSectionID = song.sections[0].id
+        let canonical = try XCTUnwrap(state.catalog.masterComposition(for: song.id))
+        state.catalog.setMasterComposition(canonical)
+        try store.upsert(masterComposition: canonical)
+
+        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == song.id })
+        for index in state.catalog.songs[songIndex].sections.indices {
+            state.catalog.songs[songIndex].sections[index].state = .locked
+        }
+        state.catalog.songs[songIndex].progress = 1
+        state.catalog.songs[songIndex].risk = "Master locked"
+        try store.upsert(song: state.catalog.songs[songIndex])
+
+        state.removeCanonicalSection(sectionID: removedSectionID, songID: song.id)
+
+        let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == song.id })
+        XCTAssertEqual(updatedSong.progress, 0, accuracy: 0.0001)
+        XCTAssertEqual(updatedSong.risk, "In assembly")
+
+        let updatedComposition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == song.id })
+        XCTAssertEqual(updatedComposition.sections.count, canonical.sections.count - 1)
+        XCTAssertTrue(updatedComposition.sections.allSatisfy { $0.state == .open })
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        let persistedSong = try XCTUnwrap(reloaded.songs.first { $0.id == song.id })
+        XCTAssertEqual(persistedSong.progress, 0, accuracy: 0.0001)
+        XCTAssertEqual(persistedSong.risk, "In assembly")
+    }
+
     func testClearingCanonicalEmptySourceHealsStaleLegacyMirrorWithoutHistory() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
