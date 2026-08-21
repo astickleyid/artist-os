@@ -50,6 +50,22 @@ final class SongLifecyclePersistenceTests: XCTestCase {
         XCTAssertEqual(reloaded.events.last?.operation, .archived)
     }
 
+    func testArchivingSelectedSongRepairsSelectionToActiveSong() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
+        state.createSong(title: "Keep Active")
+        let activeID = try XCTUnwrap(state.selectedSongID)
+        state.createSong(title: "Archive Me")
+        let archivedID = try XCTUnwrap(state.selectedSongID)
+        XCTAssertNotEqual(activeID, archivedID)
+
+        state.archiveSong(id: archivedID)
+
+        XCTAssertEqual(state.catalog.songs.first(where: { $0.id == archivedID })?.status, .archived)
+        XCTAssertEqual(state.selectedSongID, activeID)
+        XCTAssertNil(state.selectedAssetID)
+    }
+
     func testRestoreKeepsSameSongAndAddsFactualLifecycleEvent() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
