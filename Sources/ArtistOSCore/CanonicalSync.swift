@@ -55,10 +55,16 @@ public enum CanonicalSync {
                             overLocal: catalog.songs[index].updatedAt
                           )
                     else { continue }
-                    catalog.songs[index] = SongLifecycle.archive(
+                    var archived = SongLifecycle.archive(
                         catalog.songs[index],
                         at: remoteDate
                     )
+                    // SongLifecycle.archive is intentionally idempotent for local
+                    // callers. The sync boundary still advances LWW time when a
+                    // newer legacy tombstone is accepted, including for a Song
+                    // that was already archived locally.
+                    archived.updatedAt = remoteDate
+                    catalog.songs[index] = archived
                     applied.append(.init(kind: .song, id: id, deleted: false))
                     continue
                 }
