@@ -178,6 +178,8 @@ final class CanonicalSyncTests: XCTestCase {
             timestamp: baseline,
             target: .song,
             operation: .imported,
+            beforeAssetID: nil,
+            afterAssetID: assetID,
             summary: "Song imported.",
             confidence: 1
         )
@@ -207,7 +209,10 @@ final class CanonicalSyncTests: XCTestCase {
             "deleted": true
         ]], to: &catalog)
 
-        XCTAssertEqual(applied, [.init(kind: .song, id: songID, deleted: false)])
+        XCTAssertEqual(applied.count, 1)
+        XCTAssertEqual(applied.first?.kind, .song)
+        XCTAssertEqual(applied.first?.id, songID)
+        XCTAssertEqual(applied.first?.deleted, false)
         XCTAssertEqual(catalog.songs.first?.status, .archived)
         XCTAssertEqual(catalog.songs.first?.id, songID)
         XCTAssertEqual(
