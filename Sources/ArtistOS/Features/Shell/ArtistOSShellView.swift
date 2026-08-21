@@ -118,6 +118,7 @@ struct SongListColumn: View {
                             SongRow(
                                 song: song,
                                 progress: state.catalog.masterComposition(for: song.id)?.lockedProgress ?? song.progress,
+                                slotCount: state.catalog.masterComposition(for: song.id)?.sections.count ?? song.sections.count,
                                 isSelected: song.id == state.selectedSongID
                             )
                         }
@@ -266,6 +267,7 @@ struct SongListColumn: View {
 struct SongRow: View {
     let song: Song
     let progress: Double
+    let slotCount: Int
     let isSelected: Bool
 
     var body: some View {
@@ -275,7 +277,7 @@ struct SongRow: View {
                     Text(song.title)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(AOSTheme.text)
-                    Text("\(song.era) · \(song.sections.count) master slots")
+                    Text("\(song.era) · \(slotCount) master slots")
                         .font(.caption)
                         .foregroundStyle(AOSTheme.muted)
                 }
