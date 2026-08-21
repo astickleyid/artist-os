@@ -32,11 +32,16 @@ extension AppState {
         }
 
         let timestamp = Date()
+        composition.sections[compositionSectionIndex].clearSelection(.sourceAsset)
+        composition.sections[compositionSectionIndex].state = .open
+        composition.sections[compositionSectionIndex].confidence = 0
+        composition.updatedAt = timestamp
+
         var updatedSong = catalog.songs[songIndex]
         updatedSong.sections[sectionIndex].assetID = nil
         updatedSong.sections[sectionIndex].state = .open
         updatedSong.sections[sectionIndex].confidence = 0
-        recomputeMasterProgress(&updatedSong)
+        recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
         let target = masterTarget(forSectionName: canonicalSection.name)
@@ -64,11 +69,6 @@ extension AppState {
             reason: nil,
             source: .artist
         )
-
-        composition.sections[compositionSectionIndex].clearSelection(.sourceAsset)
-        composition.sections[compositionSectionIndex].state = .open
-        composition.sections[compositionSectionIndex].confidence = 0
-        composition.updatedAt = timestamp
 
         commitMasterEdit(
             song: updatedSong,
@@ -109,15 +109,15 @@ extension AppState {
             note: ""
         )
 
-        var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections.append(legacySection)
-        recomputeMasterProgress(&updatedSong)
-        updatedSong.updatedAt = timestamp
-
         var composition = catalog.masterCompositions.first(where: { $0.songID == songID })
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         composition.sections.append(canonicalSection)
         composition.updatedAt = timestamp
+
+        var updatedSong = catalog.songs[songIndex]
+        updatedSong.sections.append(legacySection)
+        recomputeMasterProgress(&updatedSong, composition: composition)
+        updatedSong.updatedAt = timestamp
 
         let event = CreativeEvent(
             id: UUID(),
@@ -169,7 +169,7 @@ extension AppState {
 
         var updatedSong = catalog.songs[songIndex]
         updatedSong.sections.removeAll { $0.id == sectionID }
-        recomputeMasterProgress(&updatedSong)
+        recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
         var removedAssetIDs: [UUID] = []
@@ -232,7 +232,7 @@ extension AppState {
         updatedSong.sections[sectionIndex].assetID = nil
         updatedSong.sections[sectionIndex].state = canonicalSection.state
         updatedSong.sections[sectionIndex].confidence = canonicalSection.confidence
-        recomputeMasterProgress(&updatedSong)
+        recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
         let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
@@ -298,17 +298,17 @@ extension AppState {
         }
     }
 
-    private func recomputeMasterProgress(_ song: inout Song) {
-        guard !song.sections.isEmpty else {
+    private func recomputeMasterProgress(_ song: inout Song, composition: MasterComposition) {
+        guard !composition.sections.isEmpty else {
             song.progress = 0
             song.risk = "In assembly"
             return
         }
-        let locked = song.sections.filter { $0.state == .locked }.count
-        song.progress = Double(locked) / Double(song.sections.count)
-        let unresolved = song.sections.filter { $0.state == .needsDecision }
+        let locked = composition.sections.filter { $0.state == .locked }.count
+        song.progress = Double(locked) / Double(composition.sections.count)
+        let unresolved = composition.sections.filter { $0.state == .needsDecision }
         song.risk = unresolved.isEmpty
-            ? (locked == song.sections.count ? "Master locked" : "In assembly")
+            ? (locked == composition.sections.count ? "Master locked" : "In assembly")
             : "\(unresolved.map(\.name).joined(separator: ", ")) decision unresolved"
     }
 
