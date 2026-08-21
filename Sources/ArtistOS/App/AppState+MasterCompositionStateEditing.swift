@@ -88,11 +88,14 @@ extension AppState {
 
         let timestamp = Date()
         composition.sections[canonicalIndex].state = newState
-        updatedSong.sections[legacyIndex].state = newState
         if newState == .locked {
             composition.sections[canonicalIndex].confidence = max(composition.sections[canonicalIndex].confidence, 0.9)
-            updatedSong.sections[legacyIndex].confidence = max(updatedSong.sections[legacyIndex].confidence, 0.9)
         }
+        // Compatibility state follows canonical truth exactly. Independently
+        // carrying the old legacy confidence can preserve stale divergence and
+        // later poison an old-catalog projection if the canonical row is absent.
+        updatedSong.sections[legacyIndex].state = composition.sections[canonicalIndex].state
+        updatedSong.sections[legacyIndex].confidence = composition.sections[canonicalIndex].confidence
         composition.updatedAt = timestamp
         recomputeCanonicalMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
