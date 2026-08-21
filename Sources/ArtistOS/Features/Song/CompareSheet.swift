@@ -137,6 +137,12 @@ struct CompareSheet: View {
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(AOSTheme.muted)
                 }
+                if let evidence = AudioComparisonEvidence.summary(for: asset) {
+                    Text("Detected audio · \(evidence)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AOSTheme.muted)
+                        .lineLimit(1)
+                }
                 Button {
                     if isActive {
                         if audio.isPlaying { audio.pause() } else { audio.resume() }
