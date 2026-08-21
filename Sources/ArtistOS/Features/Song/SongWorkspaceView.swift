@@ -80,7 +80,11 @@ struct AssetGridView: View {
     var assets: [Asset] {
         let owned = state.assets(for: song.id)
         if !owned.isEmpty { return owned }
-        return song.sections.compactMap { state.asset(id: $0.assetID) }
+        guard let composition = state.catalog.masterComposition(for: song.id) else { return [] }
+        return composition.sections.compactMap { section in
+            guard let assetID = section.selection(.sourceAsset)?.referenceID else { return nil }
+            return state.asset(id: assetID)
+        }
     }
 
     private var currentMasterAssetID: UUID? {
