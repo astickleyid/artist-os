@@ -94,7 +94,7 @@ extension AppState {
             updatedSong.sections[legacyIndex].confidence = max(updatedSong.sections[legacyIndex].confidence, 0.9)
         }
         composition.updatedAt = timestamp
-        recomputeCanonicalMasterProgress(&updatedSong)
+        recomputeCanonicalMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
         let section = composition.sections[canonicalIndex]
@@ -168,17 +168,23 @@ extension AppState {
         }
     }
 
-    private func recomputeCanonicalMasterProgress(_ song: inout Song) {
-        guard !song.sections.isEmpty else {
+    /// Song progress/risk remain compatibility summary fields, but their value
+    /// must be derived from canonical Master Composition state. A stale legacy
+    /// section mirror must never regain authority over artist-facing progress.
+    private func recomputeCanonicalMasterProgress(
+        _ song: inout Song,
+        composition: MasterComposition
+    ) {
+        guard !composition.sections.isEmpty else {
             song.progress = 0
             song.risk = "In assembly"
             return
         }
-        let locked = song.sections.filter { $0.state == .locked }.count
-        song.progress = Double(locked) / Double(song.sections.count)
-        let unresolved = song.sections.filter { $0.state == .needsDecision }
+        let locked = composition.sections.filter { $0.state == .locked }.count
+        song.progress = Double(locked) / Double(composition.sections.count)
+        let unresolved = composition.sections.filter { $0.state == .needsDecision }
         song.risk = unresolved.isEmpty
-            ? (locked == song.sections.count ? "Master locked" : "In assembly")
+            ? (locked == composition.sections.count ? "Master locked" : "In assembly")
             : "\(unresolved.map(\.name).joined(separator: ", ")) decision unresolved"
     }
 
