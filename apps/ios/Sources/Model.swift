@@ -103,7 +103,13 @@ final class CompanionStore: ObservableObject {
         var allDecisions: [MobileDecision] = []
         for song in catalogSongs {
             let assets = assetsBySong[song.id] ?? []
-            for d in VersionIntelligence.decisions(for: song, assets: assets) {
+            let composition = catalogMasterCompositions.first(where: { $0.songID == song.id })
+                ?? MasterComposition.projected(from: song)
+            for d in VersionIntelligence.decisions(
+                for: song,
+                masterComposition: composition,
+                assets: assets
+            ) {
                 allDecisions.append(MobileDecision(
                     id: d.id, kind: d.kind == .master ? .master : .competing,
                     songTitle: song.title, detail: d.detail))
@@ -126,10 +132,9 @@ final class CompanionStore: ObservableObject {
             let stack = VersionIntelligence.versionStack(assets)
             let lastEvent = catalogEvents.filter { $0.songID == song.id }.map(\.timestamp).max()
             let lastAsset = assets.map(\.updatedAt).max()
-            let canonicalOutput = catalogMasterCompositions
-                .first(where: { $0.songID == song.id })?.outputAssetID
-            let masterID = canonicalOutput ?? song.masterAssetID
-            let master = masterID.flatMap { mid in assets.first(where: { $0.id == mid }) }
+            let composition = catalogMasterCompositions.first(where: { $0.songID == song.id })
+                ?? MasterComposition.projected(from: song)
+            let master = composition.outputAssetID.flatMap { mid in assets.first(where: { $0.id == mid }) }
             let anyAnalyzed = master ?? assets.first(where: { $0.bpm != nil })
             return MobileSong(
                 id: song.id.uuidString, title: song.title, status: song.status.rawValue,
