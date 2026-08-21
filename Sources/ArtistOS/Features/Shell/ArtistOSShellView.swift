@@ -158,6 +158,12 @@ struct SongListColumn: View {
             }
             Button("Cancel", role: .cancel) { renamingSong = nil }
         }
+        .onAppear {
+            repairSelectionForScope()
+        }
+        .onChange(of: scope) { _, _ in
+            repairSelectionForScope()
+        }
     }
 
     @ViewBuilder
@@ -241,6 +247,15 @@ struct SongListColumn: View {
     private var emptyStateTitle: String {
         if !state.searchText.isEmpty { return "No matches" }
         return scope == .active ? "No active songs" : "No archived songs"
+    }
+
+    private func repairSelectionForScope() {
+        if let selectedSongID = state.selectedSongID,
+           scopedSongs.contains(where: { $0.id == selectedSongID }) {
+            return
+        }
+        state.selectedSongID = scopedSongs.first?.id
+        state.selectedAssetID = nil
     }
 }
 
