@@ -59,39 +59,91 @@ struct ArtistOSShellView: View {
 struct SongListColumn: View {
     @EnvironmentObject private var state: AppState
 
+    private enum Scope: String, CaseIterable, Identifiable {
+        case active = "Active"
+        case archived = "Archived"
+
+        var id: String { rawValue }
+    }
+
+    @State private var scope: Scope = .active
     @State private var renamingSong: Song?
     @State private var renameDraft = ""
 
-    var filteredSongs: [Song] {
-        guard !state.searchText.isEmpty else { return state.catalog.songs }
-        return state.catalog.songs.filter { $0.title.localizedCaseInsensitiveContains(state.searchText) || $0.era.localizedCaseInsensitiveContains(state.searchText) }
+    private var activeSongs: [Song] {
+        state.catalog.songs.filter { $0.status != .archived }
+    }
+
+    private var scopedSongs: [Song] {
+        switch scope {
+        case .active:
+            return activeSongs
+        case .archived:
+            return state.catalog.songs.filter { $0.status == .archived }
+        }
+    }
+
+    private var filteredSongs: [Song] {
+        guard !state.searchText.isEmpty else { return scopedSongs }
+        return scopedSongs.filter {
+            $0.title.localizedCaseInsensitiveContains(state.searchText)
+                || $0.era.localizedCaseInsensitiveContains(state.searchText)
+        }
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                decideInbox
-                if filteredSongs.isEmpty {
-                    emptyState
+        VStack(spacing: 0) {
+            Picker("Song scope", selection: $scope) {
+                ForEach(Scope.allCases) { item in
+                    Text(item.rawValue).tag(item)
                 }
-                ForEach(filteredSongs) { song in
-                    Button {
-                        state.selectedSongID = song.id
-                    } label: {
-                        SongRow(song: song, isSelected: song.id == state.selectedSongID)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    if scope == .active {
+                        decideInbox
                     }
-                    .buttonStyle(.plain)
-                    .aosHoverable(cornerRadius: 16)
-                    .contextMenu {
-                        Button("Rename…") {
-                            renameDraft = song.title
-                            renamingSong = song
+                    if filteredSongs.isEmpty {
+                        emptyState
+                    }
+                    ForEach(filteredSongs) { song in
+                        Button {
+                            state.selectedSongID = song.id
+                        } label: {
+                            SongRow(song: song, isSelected: song.id == state.selectedSongID)
+                        }
+                        .buttonStyle(.plain)
+                        .aosHoverable(cornerRadius: 16)
+                        .contextMenu {
+                            if song.status == .archived {
+                                Button("Restore to Review") {
+                                    state.restoreSong(id: song.id, to: .review)
+                                    state.selectedSongID = song.id
+                                    scope = .active
+                                }
+                                Divider()
+                            }
+                            Button("Rename…") {
+                                renameDraft = song.title
+                                renamingSong = song
+                            }
+                            if song.status != .archived {
+                                Divider()
+                                Button("Archive") {
+                                    state.archiveSong(id: song.id)
+                                }
+                            }
                         }
                     }
                 }
+                .padding(14)
+                .animation(.snappy(duration: 0.25), value: filteredSongs.map(\.id))
             }
-            .padding(14)
-            .animation(.snappy(duration: 0.25), value: filteredSongs.map(\.id))
         }
         .alert("Rename Song", isPresented: Binding(
             get: { renamingSong != nil },
@@ -106,11 +158,17 @@ struct SongListColumn: View {
             }
             Button("Cancel", role: .cancel) { renamingSong = nil }
         }
+        .onAppear {
+            repairSelectionForScope()
+        }
+        .onChange(of: scope) { _, _ in
+            repairSelectionForScope()
+        }
     }
 
     @ViewBuilder
     private var decideInbox: some View {
-        let decisions: [VersionIntelligence.Decision] = state.catalog.songs.flatMap { song -> [VersionIntelligence.Decision] in
+        let decisions: [VersionIntelligence.Decision] = activeSongs.flatMap { song -> [VersionIntelligence.Decision] in
             guard let composition = state.catalog.masterComposition(for: song.id) else { return [] }
             return VersionIntelligence.decisions(
                 for: song,
@@ -158,25 +216,46 @@ struct SongListColumn: View {
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: state.searchText.isEmpty ? "music.note.list" : "magnifyingglass")
+            Image(systemName: state.searchText.isEmpty ? (scope == .active ? "music.note.list" : "archivebox") : "magnifyingglass")
                 .font(.system(size: 26))
                 .foregroundStyle(AOSTheme.muted)
-            Text(state.searchText.isEmpty ? "No songs yet" : "No matches")
+            Text(emptyStateTitle)
                 .font(.headline.weight(.bold))
             if state.searchText.isEmpty {
-                Text("Import a career folder or create a song to get started.")
-                    .font(.caption)
-                    .foregroundStyle(AOSTheme.muted)
-                    .multilineTextAlignment(.center)
-                Button("Import Career Folder…") {
-                    state.isImportPresented = true
+                if scope == .active {
+                    Text("Import a career folder or create a song to get started.")
+                        .font(.caption)
+                        .foregroundStyle(AOSTheme.muted)
+                        .multilineTextAlignment(.center)
+                    Button("Import Career Folder…") {
+                        state.isImportPresented = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(AOSTheme.gold)
+                } else {
+                    Text("Archived songs stay intact here with their assets, decisions, and history.")
+                        .font(.caption)
+                        .foregroundStyle(AOSTheme.muted)
+                        .multilineTextAlignment(.center)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AOSTheme.gold)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
+    }
+
+    private var emptyStateTitle: String {
+        if !state.searchText.isEmpty { return "No matches" }
+        return scope == .active ? "No active songs" : "No archived songs"
+    }
+
+    private func repairSelectionForScope() {
+        if let selectedSongID = state.selectedSongID,
+           scopedSongs.contains(where: { $0.id == selectedSongID }) {
+            return
+        }
+        state.selectedSongID = scopedSongs.first?.id
+        state.selectedAssetID = nil
     }
 }
 
