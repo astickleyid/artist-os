@@ -60,6 +60,12 @@ struct CompareSheet: View {
                                   selection: $assetBID, shortcut: "b")
                 }
 
+                if !isMasterMode {
+                    Text("Candidate order uses current-source and version/recency signals only. Newer does not mean better — you decide by listening.")
+                        .font(.caption2)
+                        .foregroundStyle(AOSTheme.muted)
+                }
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("WHY THIS ONE? · OPTIONAL")
                         .font(.caption2.weight(.bold))
@@ -126,6 +132,11 @@ struct CompareSheet: View {
                     .font(.caption)
                     .foregroundStyle(AOSTheme.muted)
                     .lineLimit(1)
+                if let explanation = surfacingExplanation(for: asset) {
+                    Text(explanation)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(AOSTheme.muted)
+                }
                 Button {
                     if isActive {
                         if audio.isPlaying { audio.pause() } else { audio.resume() }
@@ -159,6 +170,15 @@ struct CompareSheet: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(isActive ? tint : .clear, lineWidth: 2)
         )
+    }
+
+    private func surfacingExplanation(for asset: Asset) -> String? {
+        guard let section else { return nil }
+        return ComparisonIntelligence.surfacingReason(
+            for: asset,
+            section: section,
+            assets: state.assets(for: song.id)
+        ).explanation
     }
 
     private func seedDefaults() {
