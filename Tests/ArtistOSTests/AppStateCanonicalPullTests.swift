@@ -54,45 +54,78 @@ final class AppStateCanonicalPullTests: XCTestCase {
         )
     }
 
-    func testCanonicalPullRepairsSelectionAfterRemoteSongTombstone() throws {
+    func testCanonicalPullArchivesLegacySongTombstoneWithoutDestroyingEvidence() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
-        let first = ImportService.makeSong(title: "First")
+        var first = ImportService.makeSong(title: "First")
+        first.updatedAt = Date(timeIntervalSince1970: 1_000)
         let second = ImportService.makeSong(title: "Second")
         try store.upsert(song: first)
         try store.upsert(song: second)
 
-        // Intentionally select an asset that belongs to the surviving song.
-        // When the selected Song itself disappears, the UI still needs to clear
-        // asset selection just like the local deleteSong path does.
-        let survivingAsset = Asset(
+        let preservedAsset = Asset(
             id: UUID(),
-            title: "Surviving selection",
-            originalFilename: "surviving.wav",
+            title: "First Song Mix",
+            originalFilename: "first-mix.wav",
             role: .fullMix,
             createdAt: Date(),
             duration: 1,
             localURLBookmark: nil,
-            songID: second.id
+            songID: first.id
         )
-        try store.insert(asset: survivingAsset)
+        try store.insert(asset: preservedAsset)
+
+        let preservedEvent = CreativeEvent(
+            id: UUID(),
+            songID: first.id,
+            timestamp: Date(timeIntervalSince1970: 1_001),
+            target: .song,
+            operation: .imported,
+            summary: "Imported first song.",
+            confidence: 1
+        )
+        try store.append(event: preservedEvent)
+
+        let preservedDecision = CreativeDecision(
+            id: UUID(),
+            songID: first.id,
+            timestamp: Date(timeIntervalSince1970: 1_002),
+            target: .song,
+            action: .approved,
+            selectedAssetID: preservedAsset.id
+        )
+        try store.append(decision: preservedDecision)
+
+        let preservedComposition = MasterComposition(
+            songID: first.id,
+            sections: [],
+            outputAssetID: preservedAsset.id,
+            updatedAt: Date(timeIntervalSince1970: 1_003)
+        )
+        try store.upsert(masterComposition: preservedComposition)
 
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.selectedSongID = first.id
-        state.selectedAssetID = survivingAsset.id
 
-        let applied = try state.applyCanonicalCloudChanges([
-            SyncLogic.tombstone(kindRaw: "song", id: first.id.uuidString)
-        ])
+        let applied = try state.applyCanonicalCloudChanges([[
+            "kind": "song",
+            "id": first.id.uuidString,
+            "updatedAt": 2_000_000.0,
+            "deleted": true
+        ]])
 
-        XCTAssertEqual(applied.count, 1)
-        XCTAssertFalse(state.catalog.songs.contains(where: { $0.id == first.id }))
-        XCTAssertTrue(state.catalog.assets.contains(where: { $0.id == survivingAsset.id }))
-        XCTAssertEqual(state.selectedSongID, second.id)
-        XCTAssertNil(state.selectedAssetID)
+        XCTAssertEqual(applied, [.init(kind: .song, id: first.id, deleted: false)])
+        XCTAssertEqual(state.catalog.songs.first(where: { $0.id == first.id })?.status, .archived)
+        XCTAssertTrue(state.catalog.assets.contains(where: { $0.id == preservedAsset.id }))
+        XCTAssertTrue(state.catalog.events.contains(where: { $0.id == preservedEvent.id }))
+        XCTAssertTrue(state.catalog.decisions.contains(where: { $0.id == preservedDecision.id }))
+        XCTAssertEqual(state.catalog.masterComposition(for: first.id)?.id, preservedComposition.id)
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertFalse(reloaded.songs.contains(where: { $0.id == first.id }))
-        XCTAssertTrue(reloaded.assets.contains(where: { $0.id == survivingAsset.id }))
+        XCTAssertEqual(reloaded.songs.first(where: { $0.id == first.id })?.status, .archived)
+        XCTAssertTrue(reloaded.assets.contains(where: { $0.id == preservedAsset.id }))
+        XCTAssertTrue(reloaded.events.contains(where: { $0.id == preservedEvent.id }))
+        XCTAssertTrue(reloaded.decisions.contains(where: { $0.id == preservedDecision.id }))
+        XCTAssertEqual(reloaded.masterComposition(for: first.id)?.id, preservedComposition.id)
     }
 
     func testCanonicalPullRejectsStaleCompositionWithoutMutatingSelection() throws {
