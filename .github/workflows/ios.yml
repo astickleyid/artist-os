@@ -39,7 +39,7 @@ jobs:
           [ -n "$APP" ] || { echo 'app not found'; exit 1; }
           ditto -c -k --sequesterRsrc --keepParent "$APP" ArtistOSMobile-sim.zip
       - name: Upload iOS simulator app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ArtistOS-iOS-simulator-app
           path: apps/ios/ArtistOSMobile-sim.zip
