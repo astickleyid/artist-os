@@ -22,7 +22,7 @@ struct CompareSheet: View {
             return state.masterStack(for: song.id)
         }
         guard let section else { return [] }
-        return ComparisonIntelligence.candidates(
+        return ComparisonIntelligence.rankedCandidates(
             for: section,
             assets: state.assets(for: song.id)
         )
