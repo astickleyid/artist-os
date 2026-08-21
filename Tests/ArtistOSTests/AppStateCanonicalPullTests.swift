@@ -80,6 +80,8 @@ final class AppStateCanonicalPullTests: XCTestCase {
             timestamp: Date(timeIntervalSince1970: 1_001),
             target: .song,
             operation: .imported,
+            beforeAssetID: nil,
+            afterAssetID: preservedAsset.id,
             summary: "Imported first song.",
             confidence: 1
         )
@@ -113,7 +115,10 @@ final class AppStateCanonicalPullTests: XCTestCase {
             "deleted": true
         ]])
 
-        XCTAssertEqual(applied, [.init(kind: .song, id: first.id, deleted: false)])
+        XCTAssertEqual(applied.count, 1)
+        XCTAssertEqual(applied.first?.kind, .song)
+        XCTAssertEqual(applied.first?.id, first.id)
+        XCTAssertEqual(applied.first?.deleted, false)
         XCTAssertEqual(state.catalog.songs.first(where: { $0.id == first.id })?.status, .archived)
         XCTAssertTrue(state.catalog.assets.contains(where: { $0.id == preservedAsset.id }))
         XCTAssertTrue(state.catalog.events.contains(where: { $0.id == preservedEvent.id }))
