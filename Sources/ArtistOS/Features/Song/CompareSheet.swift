@@ -10,7 +10,7 @@ struct CompareSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let song: Song
-    let section: MasterSection?
+    let section: MasterCompositionSection?
 
     @State private var assetAID: UUID?
     @State private var assetBID: UUID?
@@ -159,7 +159,8 @@ struct CompareSheet: View {
             assetAID = (currentMasterAssetID.flatMap { m in ids.contains(m) ? m : nil })
                 ?? ids.first { $0 != assetBID } ?? ids.first
         } else {
-            assetAID = section?.assetID ?? ids.first
+            let currentSourceID = section?.selection(.sourceAsset)?.referenceID
+            assetAID = currentSourceID ?? ids.first
             assetBID = ids.first { $0 != assetAID } ?? ids.dropFirst().first
         }
     }
