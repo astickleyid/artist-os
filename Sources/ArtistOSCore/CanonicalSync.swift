@@ -44,12 +44,22 @@ public enum CanonicalSync {
             case SyncLogic.Kind.song.rawValue:
                 let index = catalog.songs.firstIndex { $0.id == id }
                 if deleted {
-                    if let index { catalog.songs.remove(at: index) }
-                    catalog.removeMasterComposition(for: id)
-                    catalog.assets.removeAll { $0.songID == id }
-                    catalog.events.removeAll { $0.songID == id }
-                    catalog.decisions.removeAll { $0.songID == id }
-                    applied.append(.init(kind: .song, id: id, deleted: true))
+                    // Songs are permanent identity. Older clients may still emit
+                    // destructive Song tombstones, so interpret them as a
+                    // compatibility archive signal instead of deleting the Song
+                    // and its immutable evidence/history. A tombstone for an
+                    // unknown Song cannot safely reconstruct identity, so ignore it.
+                    guard let index,
+                          SyncLogic.shouldApplyRemote(
+                            updatedAt: updatedAtMs,
+                            overLocal: catalog.songs[index].updatedAt
+                          )
+                    else { continue }
+                    catalog.songs[index] = SongLifecycle.archive(
+                        catalog.songs[index],
+                        at: remoteDate
+                    )
+                    applied.append(.init(kind: .song, id: id, deleted: false))
                     continue
                 }
                 guard SyncLogic.shouldApplyRemote(
