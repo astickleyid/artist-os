@@ -50,15 +50,89 @@ final class ComparisonIntelligenceTests: XCTestCase {
         XCTAssertEqual(candidates.map(\.id), [vocal.id, beat.id])
     }
 
-    private func makeAsset(role: AssetRole, title: String) -> Asset {
+    func testRankedCandidatesKeepCanonicalSourceFirstAndNewestChallengerNext() {
+        let now = Date()
+        let current = makeAsset(
+            role: .hook,
+            title: "Hook Current",
+            modifiedAt: now.addingTimeInterval(-300),
+            vOrder: 2
+        )
+        let older = makeAsset(
+            role: .hook,
+            title: "Hook Old",
+            modifiedAt: now.addingTimeInterval(-200),
+            vOrder: 1
+        )
+        let newest = makeAsset(
+            role: .hook,
+            title: "Hook New",
+            modifiedAt: now,
+            vOrder: 3
+        )
+        let section = MasterCompositionSection(
+            name: "Hook",
+            role: AssetRole.hook.rawValue,
+            selections: [
+                MasterSelection(kind: .sourceAsset, referenceID: current.id)
+            ]
+        )
+
+        let ranked = ComparisonIntelligence.rankedCandidates(
+            for: section,
+            assets: [older, current, newest]
+        )
+
+        XCTAssertEqual(ranked.map(\.id), [current.id, newest.id, older.id])
+    }
+
+    func testRankedCandidatesUseVersionRecencyWhenThereIsNoCurrentSource() {
+        let now = Date()
+        let v1 = makeAsset(
+            role: .bridge,
+            title: "Bridge v1",
+            modifiedAt: now,
+            vOrder: 1
+        )
+        let v3 = makeAsset(
+            role: .bridge,
+            title: "Bridge v3",
+            modifiedAt: now.addingTimeInterval(-100),
+            vOrder: 3
+        )
+        let v2 = makeAsset(
+            role: .bridge,
+            title: "Bridge v2",
+            modifiedAt: now.addingTimeInterval(100),
+            vOrder: 2
+        )
+        let section = MasterCompositionSection(name: "Bridge", role: AssetRole.bridge.rawValue)
+
+        let ranked = ComparisonIntelligence.rankedCandidates(
+            for: section,
+            assets: [v1, v2, v3]
+        )
+
+        XCTAssertEqual(ranked.map(\.id), [v3.id, v2.id, v1.id])
+    }
+
+    private func makeAsset(
+        role: AssetRole,
+        title: String,
+        modifiedAt: Date? = nil,
+        vOrder: Int? = nil
+    ) -> Asset {
         Asset(
             id: UUID(),
             title: title,
             originalFilename: "\(title).wav",
             role: role,
-            createdAt: Date(),
+            createdAt: modifiedAt ?? Date(),
             duration: nil,
-            localURLBookmark: nil
+            localURLBookmark: nil,
+            fileModifiedAt: modifiedAt,
+            version: vOrder.map { "v\($0)" },
+            vOrder: vOrder
         )
     }
 }
