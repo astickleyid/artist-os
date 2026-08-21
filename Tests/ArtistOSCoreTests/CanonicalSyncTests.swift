@@ -156,6 +156,7 @@ final class CanonicalSyncTests: XCTestCase {
         let eventID = UUID()
         let decisionID = UUID()
         let baseline = Date(timeIntervalSince1970: 10_000)
+        let tombstoneDate = baseline.addingTimeInterval(10)
         let song = Song(
             id: songID, title: "Keep Me", era: "2026", status: .review,
             progress: 0, qualityScore: 0, risk: "low", sections: [],
@@ -202,13 +203,18 @@ final class CanonicalSyncTests: XCTestCase {
         let applied = CanonicalSync.apply(changes: [[
             "kind": "song",
             "id": songID.uuidString,
-            "updatedAt": (baseline.addingTimeInterval(10).timeIntervalSince1970 * 1000),
+            "updatedAt": (tombstoneDate.timeIntervalSince1970 * 1000),
             "deleted": true
         ]], to: &catalog)
 
         XCTAssertEqual(applied, [.init(kind: .song, id: songID, deleted: false)])
         XCTAssertEqual(catalog.songs.first?.status, .archived)
         XCTAssertEqual(catalog.songs.first?.id, songID)
+        XCTAssertEqual(
+            catalog.songs.first?.updatedAt.timeIntervalSince1970 ?? 0,
+            tombstoneDate.timeIntervalSince1970,
+            accuracy: 0.001
+        )
         XCTAssertEqual(catalog.assets.map(\.id), [assetID])
         XCTAssertEqual(catalog.events.map(\.id), [eventID])
         XCTAssertEqual(catalog.decisions.map(\.id), [decisionID])
