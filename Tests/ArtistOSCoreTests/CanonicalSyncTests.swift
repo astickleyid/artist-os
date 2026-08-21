@@ -150,28 +150,85 @@ final class CanonicalSyncTests: XCTestCase {
         XCTAssertEqual(catalog.masterComposition(for: songID)?.outputAssetID, newerAsset)
     }
 
-    func testSongTombstoneRemovesOwnedCanonicalHistory() {
+    func testSongTombstoneArchivesPermanentIdentityAndPreservesHistory() {
         let songID = UUID()
+        let assetID = UUID()
+        let eventID = UUID()
+        let decisionID = UUID()
+        let baseline = Date(timeIntervalSince1970: 10_000)
         let song = Song(
-            id: songID, title: "Delete Me", era: "2026", status: .review,
-            progress: 0, qualityScore: 0, risk: "low", sections: []
+            id: songID, title: "Keep Me", era: "2026", status: .review,
+            progress: 0, qualityScore: 0, risk: "low", sections: [],
+            updatedAt: baseline
+        )
+        let asset = Asset(
+            id: assetID,
+            title: "Mix",
+            originalFilename: "mix.wav",
+            role: .fullMix,
+            createdAt: baseline,
+            duration: 1,
+            localURLBookmark: nil,
+            songID: songID
+        )
+        let event = CreativeEvent(
+            id: eventID,
+            songID: songID,
+            timestamp: baseline,
+            target: .song,
+            operation: .imported,
+            summary: "Song imported.",
+            confidence: 1
         )
         let decision = CreativeDecision(
-            id: UUID(), songID: songID, timestamp: Date(), target: .song,
-            action: .approved, selectedAssetID: nil
+            id: decisionID, songID: songID, timestamp: baseline, target: .song,
+            action: .approved, selectedAssetID: assetID
         )
-        let composition = MasterComposition(songID: songID, sections: [])
+        let composition = MasterComposition(
+            songID: songID,
+            sections: [],
+            outputAssetID: assetID,
+            updatedAt: baseline
+        )
         var catalog = ArtistCatalog(
-            artistName: "Stick", songs: [song], assets: [], events: [],
-            decisions: [decision], masterCompositions: [composition]
+            artistName: "Stick",
+            songs: [song],
+            assets: [asset],
+            events: [event],
+            decisions: [decision],
+            masterCompositions: [composition]
         )
 
-        _ = CanonicalSync.apply(changes: [
-            SyncLogic.tombstone(kind: .song, id: songID.uuidString)
+        let applied = CanonicalSync.apply(changes: [[
+            "kind": "song",
+            "id": songID.uuidString,
+            "updatedAt": (baseline.addingTimeInterval(10).timeIntervalSince1970 * 1000),
+            "deleted": true
+        ]], to: &catalog)
+
+        XCTAssertEqual(applied, [.init(kind: .song, id: songID, deleted: false)])
+        XCTAssertEqual(catalog.songs.first?.status, .archived)
+        XCTAssertEqual(catalog.songs.first?.id, songID)
+        XCTAssertEqual(catalog.assets.map(\.id), [assetID])
+        XCTAssertEqual(catalog.events.map(\.id), [eventID])
+        XCTAssertEqual(catalog.decisions.map(\.id), [decisionID])
+        XCTAssertEqual(catalog.masterCompositions.map(\.id), [composition.id])
+    }
+
+    func testUnknownSongTombstoneDoesNotInventOrDeleteCatalogState() {
+        let existingSong = Song(
+            id: UUID(), title: "Existing", era: "2026", status: .review,
+            progress: 0, qualityScore: 0, risk: "low", sections: []
+        )
+        var catalog = ArtistCatalog(
+            artistName: "Stick", songs: [existingSong], assets: [], events: []
+        )
+
+        let applied = CanonicalSync.apply(changes: [
+            SyncLogic.tombstone(kind: .song, id: UUID().uuidString)
         ], to: &catalog)
 
-        XCTAssertTrue(catalog.songs.isEmpty)
-        XCTAssertTrue(catalog.decisions.isEmpty)
-        XCTAssertTrue(catalog.masterCompositions.isEmpty)
+        XCTAssertTrue(applied.isEmpty)
+        XCTAssertEqual(catalog.songs.map(\.id), [existingSong.id])
     }
 }
