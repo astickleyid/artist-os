@@ -14,12 +14,16 @@ struct InspectorView: View {
                 .textCase(.uppercase)
 
             if let song = state.selectedSong {
+                let composition = state.catalog.masterComposition(for: song.id)
+                let risk = composition?.riskSummary ?? song.risk
+                let progress = composition?.lockedProgress ?? song.progress
+
                 inspectorCard(title: "Current Risk") {
-                    Text(song.risk).font(.headline.weight(.bold))
+                    Text(risk).font(.headline.weight(.bold))
                 }
                 inspectorCard(title: "Master Progress") {
-                    AOSProgressBar(value: song.progress)
-                    Text("\(Int(song.progress * 100))% locked")
+                    AOSProgressBar(value: progress)
+                    Text("\(Int(progress * 100))% locked")
                         .font(.caption)
                         .foregroundStyle(AOSTheme.muted)
                 }
