@@ -89,18 +89,6 @@ struct MasterSectionRow: View {
     /// preserves legacy annotations without giving the mirror read precedence.
     private var displayedNote: String { section.note }
 
-    private var comparisonSection: MasterSection {
-        MasterSection(
-            id: section.id,
-            name: section.name,
-            role: section.role,
-            assetID: sourceAssetID,
-            state: section.state,
-            confidence: section.confidence,
-            note: displayedNote
-        )
-    }
-
     private var additionalCanonicalLayers: [MasterSelectionKind] {
         [.processingSnapshot, .automationSnapshot, .compRecipe].filter {
             section.selection($0) != nil
@@ -201,7 +189,7 @@ struct MasterSectionRow: View {
             noteEditor
         }
         .sheet(isPresented: $isComparing) {
-            CompareSheet(song: song, section: comparisonSection)
+            CompareSheet(song: song, section: section)
         }
     }
 
