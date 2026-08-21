@@ -9,6 +9,29 @@ import Foundation
 /// if its imported role metadata is stale, because canonical truth outranks
 /// inferred metadata.
 public enum ComparisonIntelligence {
+    public enum SurfacingReason: Equatable {
+        case currentCanonicalSource
+        case highestVersionLabel(Int)
+        case mostRecentlyModified
+        case mostRecentlyImported
+        case alternative
+
+        public var explanation: String {
+            switch self {
+            case .currentCanonicalSource:
+                return "Current canonical source"
+            case .highestVersionLabel(let version):
+                return "Newest version label (v\(version))"
+            case .mostRecentlyModified:
+                return "Most recently modified relevant take"
+            case .mostRecentlyImported:
+                return "Most recently imported relevant take"
+            case .alternative:
+                return "Relevant alternate take"
+            }
+        }
+    }
+
     public static func candidates(
         for section: MasterCompositionSection,
         assets: [Asset]
@@ -44,5 +67,45 @@ public enum ComparisonIntelligence {
             return [current] + challengers
         }
         return challengers
+    }
+
+    /// Explains why a candidate is being surfaced without making a quality
+    /// judgment. Artist OS may use version/recency metadata to order candidates,
+    /// but the artist still decides which recording is actually better.
+    public static func surfacingReason(
+        for asset: Asset,
+        section: MasterCompositionSection,
+        assets: [Asset]
+    ) -> SurfacingReason {
+        let filtered = candidates(for: section, assets: assets)
+        let currentSourceID = section.selection(.sourceAsset)?.referenceID
+        if asset.id == currentSourceID {
+            return .currentCanonicalSource
+        }
+
+        let challengers = filtered.filter { $0.id != currentSourceID }
+        guard VersionIntelligence.sortVersions(challengers).first?.id == asset.id else {
+            return .alternative
+        }
+
+        let versionOrders = challengers.compactMap(\.vOrder)
+        if let order = asset.vOrder,
+           versionOrders.contains(where: { $0 != order }),
+           order == versionOrders.max() {
+            return .highestVersionLabel(order)
+        }
+
+        let modifiedDates = challengers.compactMap(\.fileModifiedAt)
+        if let modifiedAt = asset.fileModifiedAt,
+           modifiedDates.contains(where: { $0 != modifiedAt }),
+           modifiedAt == modifiedDates.max() {
+            return .mostRecentlyModified
+        }
+
+        if challengers.contains(where: { $0.createdAt != asset.createdAt }) {
+            return .mostRecentlyImported
+        }
+
+        return .alternative
     }
 }
