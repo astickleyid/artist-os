@@ -209,22 +209,6 @@ public enum VersionIntelligence {
         return fired
     }
 
-    /// Backward-compatible D1 wrapper for legacy callers and shared logic tests.
-    /// New product code should mutate canonical Master Composition instead.
-    public static func applyAutoDecisions(song: inout Song, assets: [Asset]) -> [AutoFlag] {
-        var composition = MasterComposition.projected(from: song)
-        let fired = applyAutoDecisions(masterComposition: &composition, assets: assets)
-        guard !fired.isEmpty else { return [] }
-
-        let canonicalByID = Dictionary(uniqueKeysWithValues: composition.sections.map { ($0.id, $0) })
-        for index in song.sections.indices {
-            guard let canonical = canonicalByID[song.sections[index].id] else { continue }
-            song.sections[index].state = canonical.state
-            song.sections[index].confidence = canonical.confidence
-        }
-        return fired
-    }
-
     public enum DecisionKind { case slot, master }
 
     public struct Decision: Identifiable {
@@ -277,14 +261,5 @@ public enum VersionIntelligence {
             }
         }
         return out
-    }
-
-    /// Backward-compatible projection for legacy callers and shared logic tests.
-    public static func decisions(for song: Song, assets: [Asset]) -> [Decision] {
-        decisions(
-            for: song,
-            masterComposition: MasterComposition.projected(from: song),
-            assets: assets
-        )
     }
 }

@@ -10,25 +10,27 @@ final class DecisionEngineTests: XCTestCase {
     }
 
     func testD1EscalatesOnceAndNeverTouchesLocked() {
-        var song = ImportService.makeSong(title: "T") // Intro/Verse 1/Hook/Bridge/Outro
+        let song = ImportService.makeSong(title: "T")
+        var composition = MasterComposition.projected(from: song)
         let hooks = [asset(.hook, "v1", 1, songID: song.id), asset(.hook, "v2", 2, songID: song.id)]
 
-        var fired = VersionIntelligence.applyAutoDecisions(song: &song, assets: hooks)
+        var fired = VersionIntelligence.applyAutoDecisions(masterComposition: &composition, assets: hooks)
         XCTAssertEqual(fired.count, 1)
-        XCTAssertEqual(song.sections[2].state, .needsDecision)
+        XCTAssertEqual(composition.sections[2].state, .needsDecision)
 
-        fired = VersionIntelligence.applyAutoDecisions(song: &song, assets: hooks)
-        XCTAssertTrue(fired.isEmpty) // idempotent
+        fired = VersionIntelligence.applyAutoDecisions(masterComposition: &composition, assets: hooks)
+        XCTAssertTrue(fired.isEmpty)
 
-        song.sections[2].state = .locked
-        XCTAssertTrue(VersionIntelligence.applyAutoDecisions(song: &song, assets: hooks).isEmpty)
+        composition.sections[2].state = .locked
+        XCTAssertTrue(VersionIntelligence.applyAutoDecisions(masterComposition: &composition, assets: hooks).isEmpty)
     }
 
     func testD1RequiresTwoCandidates() {
-        var song = ImportService.makeSong(title: "T")
+        let song = ImportService.makeSong(title: "T")
+        var composition = MasterComposition.projected(from: song)
         let one = [asset(.hook, "v1", 1, songID: song.id)]
-        XCTAssertTrue(VersionIntelligence.applyAutoDecisions(song: &song, assets: one).isEmpty)
-        XCTAssertEqual(song.sections[2].state, .open)
+        XCTAssertTrue(VersionIntelligence.applyAutoDecisions(masterComposition: &composition, assets: one).isEmpty)
+        XCTAssertEqual(composition.sections[2].state, .open)
     }
 
     func testCanonicalD1IgnoresStaleLegacyState() {
@@ -59,19 +61,32 @@ final class DecisionEngineTests: XCTestCase {
     }
 
     func testD2MasterLifecycle() {
-        var song = ImportService.makeSong(title: "T")
+        let song = ImportService.makeSong(title: "T")
         let v1 = asset(.fullMix, "v1", 1, songID: song.id)
         let v2 = asset(.fullMix, "v2", 2, songID: song.id)
+        var composition = MasterComposition.projected(from: song)
 
-        var decisions = VersionIntelligence.decisions(for: song, assets: [v1, v2])
+        var decisions = VersionIntelligence.decisions(
+            for: song,
+            masterComposition: composition,
+            assets: [v1, v2]
+        )
         XCTAssertEqual(decisions.count, 1)
         XCTAssertEqual(decisions.first?.kind, .master)
 
-        song.masterAssetID = v2.id // pin latest -> resolved
-        XCTAssertTrue(VersionIntelligence.decisions(for: song, assets: [v1, v2]).isEmpty)
+        composition.outputAssetID = v2.id
+        XCTAssertTrue(VersionIntelligence.decisions(
+            for: song,
+            masterComposition: composition,
+            assets: [v1, v2]
+        ).isEmpty)
 
-        song.masterAssetID = v1.id // pinned older -> challenged
-        decisions = VersionIntelligence.decisions(for: song, assets: [v1, v2])
+        composition.outputAssetID = v1.id
+        decisions = VersionIntelligence.decisions(
+            for: song,
+            masterComposition: composition,
+            assets: [v1, v2]
+        )
         XCTAssertEqual(decisions.count, 1)
         XCTAssertTrue(decisions.first?.detail.contains("challenges") ?? false)
     }
@@ -81,12 +96,10 @@ final class DecisionEngineTests: XCTestCase {
         let v1 = asset(.fullMix, "v1", 1, songID: song.id)
         let v2 = asset(.fullMix, "v2", 2, songID: song.id)
 
-        // Legacy mirrors say everything is resolved.
+        // Legacy mirrors say everything is resolved while canonical truth says
+        // both the hook and current master require a decision.
         song.sections[2].state = .locked
         song.masterAssetID = v2.id
-        XCTAssertTrue(VersionIntelligence.decisions(for: song, assets: [v1, v2]).isEmpty)
-
-        // Canonical truth says the hook and master both require a decision.
         var composition = MasterComposition.projected(from: song)
         composition.sections[2].state = .needsDecision
         composition.outputAssetID = v1.id
@@ -110,7 +123,6 @@ final class DecisionEngineTests: XCTestCase {
             assets: [v1, v2]
         )
         XCTAssertTrue(canonical.isEmpty)
-        XCTAssertEqual(VersionIntelligence.decisions(for: song, assets: [v1, v2]).count, 2)
     }
 
     @MainActor
@@ -165,7 +177,7 @@ final class DecisionEngineTests: XCTestCase {
         state.approveMasterDecision(songID: songID, assetID: mixB.id)
         XCTAssertEqual(state.catalog.masterComposition(for: songID)?.outputAssetID, mixB.id)
         XCTAssertEqual(state.catalog.songs[0].masterAssetID, mixB.id)
-        XCTAssertEqual(state.pendingDecisions.count, 1) // slot decision remains
+        XCTAssertEqual(state.pendingDecisions.count, 1)
 
         reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.masterComposition(for: songID)?.outputAssetID, mixB.id)
