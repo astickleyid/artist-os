@@ -60,6 +60,15 @@ struct CompareSheet: View {
                                   selection: $assetBID, shortcut: "b")
                 }
 
+                if let assetA,
+                   let assetB,
+                   let difference = AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB) {
+                    Text("Measured difference · \(difference)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AOSTheme.muted)
+                        .lineLimit(2)
+                }
+
                 if !isMasterMode {
                     Text("Candidate order uses current-source and version/recency signals only. Newer does not mean better — you decide by listening.")
                         .font(.caption2)
