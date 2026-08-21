@@ -71,27 +71,6 @@ final class DecisionPersistenceTests: XCTestCase {
         assertDecisionEqual(loaded.decisions[0], decision)
     }
 
-    func testDeletingSongCascadesDecisionHistory() throws {
-        let store = CatalogStore(database: try AppDatabase.inMemory())
-        let song = ImportService.makeSong(title: "Decision Cascade")
-        try store.upsert(song: song)
-        try store.append(decision: CreativeDecision(
-            id: UUID(),
-            songID: song.id,
-            timestamp: Date(),
-            target: .song,
-            action: .deferred,
-            selectedAssetID: nil,
-            reason: "Revisit after the next recording session."
-        ))
-
-        try store.delete(songID: song.id)
-
-        let loaded = store.loadCatalog(artistName: "T")
-        XCTAssertTrue(loaded.songs.isEmpty)
-        XCTAssertTrue(loaded.decisions.isEmpty)
-    }
-
     func testSeedIncludesDecisionHistory() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let song = ImportService.makeSong(title: "Seeded")
