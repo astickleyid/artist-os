@@ -116,6 +116,49 @@ final class ComparisonIntelligenceTests: XCTestCase {
         XCTAssertEqual(ranked.map(\.id), [v3.id, v2.id, v1.id])
     }
 
+    func testSurfacingReasonIdentifiesCanonicalSourceAndHighestVersionChallenger() {
+        let current = makeAsset(role: .hook, title: "Hook Current", vOrder: 2)
+        let newest = makeAsset(role: .hook, title: "Hook v4", vOrder: 4)
+        let older = makeAsset(role: .hook, title: "Hook v3", vOrder: 3)
+        let section = MasterCompositionSection(
+            name: "Hook",
+            role: AssetRole.hook.rawValue,
+            selections: [MasterSelection(kind: .sourceAsset, referenceID: current.id)]
+        )
+        let assets = [older, current, newest]
+
+        XCTAssertEqual(
+            ComparisonIntelligence.surfacingReason(for: current, section: section, assets: assets),
+            .currentCanonicalSource
+        )
+        XCTAssertEqual(
+            ComparisonIntelligence.surfacingReason(for: newest, section: section, assets: assets),
+            .highestVersionLabel(4)
+        )
+        XCTAssertEqual(
+            ComparisonIntelligence.surfacingReason(for: older, section: section, assets: assets),
+            .alternative
+        )
+    }
+
+    func testSurfacingReasonFallsBackToModificationRecencyWithoutVersionDifference() {
+        let now = Date()
+        let current = makeAsset(role: .leadVocal, title: "Current", modifiedAt: now.addingTimeInterval(-300))
+        let newest = makeAsset(role: .leadVocal, title: "New Take", modifiedAt: now)
+        let older = makeAsset(role: .leadVocal, title: "Old Take", modifiedAt: now.addingTimeInterval(-100))
+        let section = MasterCompositionSection(
+            name: "Lead Vocal",
+            role: AssetRole.leadVocal.rawValue,
+            selections: [MasterSelection(kind: .sourceAsset, referenceID: current.id)]
+        )
+        let assets = [older, current, newest]
+
+        XCTAssertEqual(
+            ComparisonIntelligence.surfacingReason(for: newest, section: section, assets: assets),
+            .mostRecentlyModified
+        )
+    }
+
     private func makeAsset(
         role: AssetRole,
         title: String,
