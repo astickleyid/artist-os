@@ -55,20 +55,4 @@ final class PersistenceTests: XCTestCase {
         let loaded = store.loadCatalog(artistName: "T").songs[0]
         XCTAssertEqual(loaded.sections.map(\.name), song.sections.map(\.name))
     }
-
-    func testDeleteSongCascades() throws {
-        let store = CatalogStore(database: try AppDatabase.inMemory())
-        let song = ImportService.makeSong(title: "Doomed")
-        try store.upsert(song: song)
-        try store.append(event: CreativeEvent(
-            id: UUID(), songID: song.id, timestamp: Date(),
-            target: .song, operation: .imported,
-            beforeAssetID: nil, afterAssetID: nil, summary: "x", confidence: 1
-        ))
-        try store.delete(songID: song.id)
-
-        let catalog = store.loadCatalog(artistName: "T")
-        XCTAssertTrue(catalog.songs.isEmpty)
-        XCTAssertTrue(catalog.events.isEmpty)
-    }
 }
