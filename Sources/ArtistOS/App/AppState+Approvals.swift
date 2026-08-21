@@ -37,7 +37,6 @@ extension AppState {
         updatedSong.sections[sectionIndex].assetID = winner
         updatedSong.sections[sectionIndex].state = .locked
         updatedSong.sections[sectionIndex].confidence = max(updatedSong.sections[sectionIndex].confidence, 0.9)
-        recomputeApprovalProgress(&updatedSong)
         updatedSong.updatedAt = timestamp
 
         var events: [CreativeEvent] = []
@@ -98,6 +97,7 @@ extension AppState {
             0.9
         )
         composition.updatedAt = timestamp
+        recomputeApprovalProgress(&updatedSong, composition: composition)
 
         let syncChanges = canonicalApprovalSyncChanges(
             song: updatedSong,
@@ -264,17 +264,17 @@ extension AppState {
         }
     }
 
-    private func recomputeApprovalProgress(_ song: inout Song) {
-        guard !song.sections.isEmpty else {
+    private func recomputeApprovalProgress(_ song: inout Song, composition: MasterComposition) {
+        guard !composition.sections.isEmpty else {
             song.progress = 0
             song.risk = "In assembly"
             return
         }
-        let locked = song.sections.filter { $0.state == .locked }.count
-        song.progress = Double(locked) / Double(song.sections.count)
-        let unresolved = song.sections.filter { $0.state == .needsDecision }
+        let locked = composition.sections.filter { $0.state == .locked }.count
+        song.progress = Double(locked) / Double(composition.sections.count)
+        let unresolved = composition.sections.filter { $0.state == .needsDecision }
         song.risk = unresolved.isEmpty
-            ? (locked == song.sections.count ? "Master locked" : "In assembly")
+            ? (locked == composition.sections.count ? "Master locked" : "In assembly")
             : "\(unresolved.map(\.name).joined(separator: ", ")) decision unresolved"
     }
 
