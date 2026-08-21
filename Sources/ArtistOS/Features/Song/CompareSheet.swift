@@ -18,7 +18,14 @@ struct CompareSheet: View {
 
     private var isMasterMode: Bool { section == nil }
     private var candidates: [Asset] {
-        isMasterMode ? state.masterStack(for: song.id) : state.assets(for: song.id)
+        if isMasterMode {
+            return state.masterStack(for: song.id)
+        }
+        guard let section else { return [] }
+        return ComparisonIntelligence.candidates(
+            for: section,
+            assets: state.assets(for: song.id)
+        )
     }
     private var currentMasterAssetID: UUID? {
         state.catalog.masterComposition(for: song.id)?.outputAssetID
@@ -39,7 +46,9 @@ struct CompareSheet: View {
             }
 
             if candidates.count < 2 {
-                Text("This song needs at least two assets to run a comparison. Import more takes first.")
+                Text(isMasterMode
+                     ? "This song needs at least two full-mix versions to run a comparison. Import another mix first."
+                     : "This slot needs at least two relevant assets to run a comparison. Import another matching take first.")
                     .font(.subheadline)
                     .foregroundStyle(AOSTheme.muted)
                     .padding(.vertical, 20)
@@ -160,7 +169,7 @@ struct CompareSheet: View {
                 ?? ids.first { $0 != assetBID } ?? ids.first
         } else {
             let currentSourceID = section?.selection(.sourceAsset)?.referenceID
-            assetAID = currentSourceID ?? ids.first
+            assetAID = currentSourceID.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
             assetBID = ids.first { $0 != assetAID } ?? ids.dropFirst().first
         }
     }
