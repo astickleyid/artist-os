@@ -37,6 +37,10 @@ extension AppState {
 
         catalog.songs[index] = updated
         catalog.events.append(event)
+        if selectedSongID == id {
+            selectedSongID = catalog.songs.first(where: { $0.status != .archived })?.id
+            selectedAssetID = nil
+        }
         if !syncChanges.isEmpty { resumeCanonicalSyncOutbox() }
     }
 
