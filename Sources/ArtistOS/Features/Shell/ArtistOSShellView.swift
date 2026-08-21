@@ -115,7 +115,11 @@ struct SongListColumn: View {
                         Button {
                             state.selectedSongID = song.id
                         } label: {
-                            SongRow(song: song, isSelected: song.id == state.selectedSongID)
+                            SongRow(
+                                song: song,
+                                progress: state.catalog.masterComposition(for: song.id)?.lockedProgress ?? song.progress,
+                                isSelected: song.id == state.selectedSongID
+                            )
                         }
                         .buttonStyle(.plain)
                         .aosHoverable(cornerRadius: 16)
@@ -261,6 +265,7 @@ struct SongListColumn: View {
 
 struct SongRow: View {
     let song: Song
+    let progress: Double
     let isSelected: Bool
 
     var body: some View {
@@ -277,7 +282,7 @@ struct SongRow: View {
                 Spacer()
                 AOSBadge(text: song.status.rawValue)
             }
-            AOSProgressBar(value: song.progress)
+            AOSProgressBar(value: progress)
         }
         .padding(14)
         .background(isSelected ? AOSTheme.gold.opacity(0.10) : AOSTheme.panel.opacity(0.70), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
