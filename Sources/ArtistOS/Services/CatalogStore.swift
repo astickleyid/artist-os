@@ -118,6 +118,21 @@ final class CatalogStore {
         }
     }
 
+    /// Persists a non-destructive Song lifecycle transition as one factual unit.
+    /// Song identity/history remain intact while status, lifecycle Event, and
+    /// durable outbound sync intent either all commit or all roll back.
+    func commitSongLifecycle(
+        song: Song,
+        event: CreativeEvent,
+        syncChanges: [SyncLogic.JSONDict] = []
+    ) throws {
+        try database.dbQueue.write { db in
+            try saveSong(song, in: db)
+            try EventRecord(event).save(db)
+            try enqueueCanonicalSyncChanges(syncChanges, in: db)
+        }
+    }
+
     func commitMasterAnnotation(
         song: Song,
         masterComposition: MasterComposition,
