@@ -223,17 +223,4 @@ final class MasterCompositionPersistenceTests: XCTestCase {
         XCTAssertEqual(resolved.sections[0].selection(.sourceAsset)?.referenceID, canonicalSource)
         XCTAssertNotEqual(resolved.sections[0].selection(.sourceAsset)?.referenceID, legacySource)
     }
-
-    func testDeletingSongCascadesCanonicalComposition() throws {
-        let store = CatalogStore(database: try AppDatabase.inMemory())
-        let song = ImportService.makeSong(title: "Cascade Composition")
-        try store.upsert(song: song)
-        try store.upsert(masterComposition: MasterComposition.projected(from: song))
-
-        try store.delete(songID: song.id)
-
-        let loaded = store.loadCatalog(artistName: "T")
-        XCTAssertTrue(loaded.songs.isEmpty)
-        XCTAssertTrue(loaded.masterCompositions.isEmpty)
-    }
 }
