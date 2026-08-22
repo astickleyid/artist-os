@@ -95,6 +95,32 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   assert(projected.risk === 'Hook decision unresolved', 'risk is derived from canonical unresolved state');
 })();
 
+(function canonicalCompositionReconstructsClearedSongMirrors() {
+  const song = {
+    id: 's1', title: 'Song', masterAssetId: null, progress: 0, risk: 'In assembly',
+    sections: [
+      { id: 'sec1', name: 'Hook', role: 'hook', assetId: null, state: 'open', conf: 0, note: '' }
+    ]
+  };
+  const composition = {
+    id: 'm1', songId: 's1', outputAssetId: 'canonical-master', updatedAt: 60,
+    sections: [
+      {
+        id: 'sec1', name: 'Hook', role: 'hook', state: 'locked', confidence: 0.9, note: 'approved source',
+        selections: [{ kind: 'sourceAsset', referenceId: 'canonical-source' }]
+      }
+    ]
+  };
+  const projected = C.projectCanonicalSong(song, composition);
+  assert(projected.masterAssetId === 'canonical-master', 'web current master reconstructs from canonical composition when Song mirror is cleared');
+  assert(projected.sections[0].assetId === 'canonical-source', 'web section source reconstructs from canonical composition when Song mirror is cleared');
+  assert(projected.sections[0].state === 'locked', 'web section state reconstructs from canonical composition');
+  assert(projected.sections[0].conf === 0.9, 'web section confidence reconstructs from canonical composition');
+  assert(projected.sections[0].note === 'approved source', 'web section note reconstructs from canonical composition');
+  assert(projected.progress === 1, 'web progress reconstructs from canonical section state');
+  assert(projected.risk === 'Master locked', 'web risk reconstructs from canonical section state');
+})();
+
 (function newestCompositionWinsRuntimeProjection() {
   const songs = [{ id: 's1', sections: [], masterAssetId: 'legacy' }];
   const compositions = [
