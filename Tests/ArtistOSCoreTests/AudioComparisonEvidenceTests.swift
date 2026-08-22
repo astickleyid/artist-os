@@ -43,6 +43,26 @@ final class AudioComparisonEvidenceTests: XCTestCase {
         )
     }
 
+    func testRelativeSummaryTreatsEnharmonicKeySpellingsAsEquivalent() {
+        let assetA = makeAsset(bpm: nil, key: "C# minor", duration: nil)
+        let assetB = makeAsset(bpm: nil, key: "D♭ minor", duration: nil)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "Same detected key"
+        )
+    }
+
+    func testRelativeSummaryNormalizesMajorMinorAbbreviationsAndFlatSpellings() {
+        let assetA = makeAsset(bpm: nil, key: "A# major", duration: nil)
+        let assetB = makeAsset(bpm: nil, key: "Bb MAJ", duration: nil)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "Same detected key"
+        )
+    }
+
     func testRelativeSummaryUsesOnlyEvidenceAvailableOnBothSides() {
         let assetA = makeAsset(bpm: 126, key: nil, duration: nil)
         let assetB = makeAsset(bpm: 124, key: "A minor", duration: 150)
