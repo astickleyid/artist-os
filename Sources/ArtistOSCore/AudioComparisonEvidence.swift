@@ -63,6 +63,23 @@ public enum AudioComparisonEvidence {
         return parts.joined(separator: " · ")
     }
 
+    /// Calls attention to a large duration shift that may deserve an arrangement check.
+    /// This is a review signal, not a claim that the arrangement changed or improved.
+    /// Both an absolute (8s) and relative (8%) threshold must be crossed so short
+    /// detector noise and trivial long-song drift stay out of the artist's way.
+    public static func arrangementReviewSignal(between assetA: Asset, and assetB: Asset) -> String? {
+        guard let durationA = validDuration(assetA.duration),
+              let durationB = validDuration(assetB.duration) else { return nil }
+
+        let delta = durationB - durationA
+        let absoluteDelta = abs(delta)
+        let relativeDelta = absoluteDelta / durationA
+        guard absoluteDelta >= 8, relativeDelta >= 0.08 else { return nil }
+
+        let percent = Int((relativeDelta * 100).rounded())
+        return "Arrangement check · B is \(percent)% \(delta > 0 ? "longer" : "shorter")"
+    }
+
     private static func validBPM(_ bpm: Double?) -> Double? {
         guard let bpm, bpm.isFinite, bpm > 0 else { return nil }
         return bpm
