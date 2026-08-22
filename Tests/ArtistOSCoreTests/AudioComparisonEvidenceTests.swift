@@ -43,6 +43,26 @@ final class AudioComparisonEvidenceTests: XCTestCase {
         )
     }
 
+    func testRelativeSummaryTreatsHalfDoubleTimeTempoAsSameFamily() {
+        let assetA = makeAsset(bpm: 70, key: nil, duration: nil)
+        let assetB = makeAsset(bpm: 140, key: nil, duration: nil)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "Same tempo family (half/double-time)"
+        )
+    }
+
+    func testRelativeSummaryAllowsSmallDetectorDriftWithinHalfDoubleTimeFamily() {
+        let assetA = makeAsset(bpm: 69.8, key: nil, duration: nil)
+        let assetB = makeAsset(bpm: 140.2, key: nil, duration: nil)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "Same tempo family (half/double-time)"
+        )
+    }
+
     func testRelativeSummaryTreatsEnharmonicKeySpellingsAsEquivalent() {
         let assetA = makeAsset(bpm: nil, key: "C# minor", duration: nil)
         let assetB = makeAsset(bpm: nil, key: "D♭ minor", duration: nil)
