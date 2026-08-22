@@ -85,6 +85,76 @@ final class CanonicalSyncContractTests: XCTestCase {
         XCTAssertEqual(decoded.sections[0].confidence, 0.96, accuracy: 0.0001)
     }
 
+    func testSongSyncRoundTripDoesNotRequireLegacySourceOrMasterMirrors() throws {
+        var song = Song(
+            id: UUID(),
+            title: "Canonical Only",
+            era: "2026",
+            status: .review,
+            progress: 0.4,
+            qualityScore: 0,
+            risk: "Hook unresolved",
+            sections: [
+                MasterSection(
+                    id: UUID(), name: "Hook", role: "Hook",
+                    assetID: nil, state: .open, confidence: 0, note: ""
+                )
+            ]
+        )
+        song.masterAssetID = nil
+        song.updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let sourceID = UUID()
+        let outputID = UUID()
+        let composition = MasterComposition(
+            id: UUID(),
+            songID: song.id,
+            sections: [
+                MasterCompositionSection(
+                    id: song.sections[0].id,
+                    name: "Hook",
+                    role: "Hook",
+                    selections: [
+                        MasterSelection(kind: .sourceAsset, referenceID: sourceID)
+                    ],
+                    state: .needsDecision,
+                    confidence: 0.72,
+                    note: "Canonical source lives here"
+                )
+            ],
+            outputAssetID: outputID,
+            updatedAt: song.updatedAt
+        )
+
+        let songChange = SyncLogic.change(forSong: song)
+        let songPayload = try XCTUnwrap(songChange["data"] as? SyncLogic.JSONDict)
+        let songUpdatedAt = SyncLogic.date(
+            fromMs: try XCTUnwrap((songChange["updatedAt"] as? NSNumber)?.doubleValue)
+        )
+        let decodedSong = try XCTUnwrap(
+            SyncLogic.mergedSong(payload: songPayload, updatedAt: songUpdatedAt, existing: nil)
+        )
+
+        XCTAssertNil(decodedSong.masterAssetID)
+        XCTAssertEqual(decodedSong.sections.count, 1)
+        XCTAssertNil(decodedSong.sections[0].assetID)
+
+        let masterChange = SyncLogic.change(forMasterComposition: composition)
+        let masterPayload = try XCTUnwrap(masterChange["data"] as? SyncLogic.JSONDict)
+        let masterUpdatedAt = SyncLogic.date(
+            fromMs: try XCTUnwrap((masterChange["updatedAt"] as? NSNumber)?.doubleValue)
+        )
+        let decodedComposition = try XCTUnwrap(
+            SyncLogic.masterComposition(payload: masterPayload, updatedAt: masterUpdatedAt)
+        )
+
+        XCTAssertEqual(decodedComposition.outputAssetID, outputID)
+        XCTAssertEqual(decodedComposition.sections[0].selection(.sourceAsset)?.referenceID, sourceID)
+        XCTAssertEqual(decodedComposition.sections[0].state, .needsDecision)
+        XCTAssertEqual(decodedComposition.sections[0].confidence, 0.72, accuracy: 0.0001)
+        XCTAssertEqual(decodedComposition.sections[0].note, "Canonical source lives here")
+    }
+
     func testEventPayloadKeepsBeforeAndAfterEvidence() throws {
         let before = UUID()
         let after = UUID()
