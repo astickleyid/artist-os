@@ -7,9 +7,9 @@ private let approvalLogger = Logger(subsystem: "com.stickley.artistos", category
 @MainActor
 extension AppState {
     /// Commits an artist's section-level choice as one unit of truth:
-    /// legacy compatibility state + factual events + CreativeDecision +
-    /// canonical Master Composition. In-memory state changes only after the
-    /// SQLite transaction succeeds.
+    /// compatibility summaries + factual events + CreativeDecision + canonical
+    /// Master Composition. Legacy source pointers are no longer written.
+    /// In-memory state changes only after the SQLite transaction succeeds.
     func approveSectionDecision(
         sectionID: UUID,
         songID: UUID,
@@ -34,7 +34,6 @@ extension AppState {
         let timestamp = Date()
         let target = approvalTarget(forSectionName: canonicalSection.name)
         var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections[sectionIndex].assetID = winner
         updatedSong.sections[sectionIndex].state = .locked
         updatedSong.sections[sectionIndex].confidence = max(updatedSong.sections[sectionIndex].confidence, 0.9)
         updatedSong.updatedAt = timestamp
@@ -128,8 +127,8 @@ extension AppState {
     }
 
     /// Commits an artist's chosen current full-song master. The canonical
-    /// Master Composition output, legacy master pointer, factual event, and
-    /// Decision are persisted atomically.
+    /// Master Composition output, factual event, and Decision are persisted
+    /// atomically. The legacy Song master pointer is no longer written.
     func approveMasterDecision(
         songID: UUID,
         assetID: UUID,
@@ -144,31 +143,10 @@ extension AppState {
             ?? MasterComposition.projected(from: catalog.songs[songIndex])
         let oldMasterID = composition.outputAssetID
 
-        if oldMasterID == assetID {
-            guard catalog.songs[songIndex].masterAssetID != assetID else { return }
-            var updatedSong = catalog.songs[songIndex]
-            updatedSong.masterAssetID = assetID
-            updatedSong.updatedAt = Date()
-            let syncChanges = syncStatus == .on ? [SyncLogic.change(forSong: updatedSong)] : []
-            do {
-                try store.commitSongCompatibilityMirror(
-                    song: updatedSong,
-                    syncChanges: syncChanges
-                )
-            } catch {
-                approvalLogger.error("Master compatibility repair failed: \(error.localizedDescription)")
-                return
-            }
-            catalog.songs[songIndex] = updatedSong
-            if !syncChanges.isEmpty {
-                resumeCanonicalSyncOutbox()
-            }
-            return
-        }
+        if oldMasterID == assetID { return }
 
         let timestamp = Date()
         var updatedSong = catalog.songs[songIndex]
-        updatedSong.masterAssetID = assetID
         updatedSong.updatedAt = timestamp
 
         let event = CreativeEvent(
