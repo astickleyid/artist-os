@@ -75,12 +75,62 @@
     });
   }
 
+  function canonicalSourceAssetID(section) {
+    const source = ((section && section.selections) || []).find(selection => selection.kind === "sourceAsset");
+    return source && source.referenceId ? source.referenceId : null;
+  }
+
+  function projectCanonicalSong(song, composition) {
+    if (!song || !composition) return song;
+    const legacyByID = new Map(((song.sections) || []).map(section => [section.id, section]));
+    const sections = ((composition.sections) || []).map(section => {
+      const legacy = legacyByID.get(section.id) || {};
+      return {
+        ...legacy,
+        id: section.id,
+        name: section.name != null ? section.name : (legacy.name || "Section"),
+        role: section.role != null ? section.role : (legacy.role || ""),
+        assetId: canonicalSourceAssetID(section),
+        state: section.state != null ? section.state : (legacy.state || "open"),
+        conf: section.confidence != null ? section.confidence : (legacy.conf || 0),
+        note: section.note != null ? section.note : (legacy.note || "")
+      };
+    });
+    const locked = sections.filter(section => section.state === "locked").length;
+    const progress = sections.length ? locked / sections.length : 0;
+    const unresolved = sections.filter(section => section.state === "needsDecision").map(section => section.name);
+    const risk = unresolved.length
+      ? unresolved.join(", ") + " decision unresolved"
+      : (sections.length && progress === 1 ? "Master locked" : "In assembly");
+
+    return {
+      ...song,
+      sections,
+      masterAssetId: composition.outputAssetId || null,
+      progress,
+      risk
+    };
+  }
+
+  function projectCanonicalSongs(songs, compositions) {
+    const newestBySong = new Map();
+    for (const composition of compositions || []) {
+      if (!composition || !composition.songId) continue;
+      const current = newestBySong.get(composition.songId);
+      if (!current || stampOf(composition) > stampOf(current)) newestBySong.set(composition.songId, composition);
+    }
+    return (songs || []).map(song => projectCanonicalSong(song, newestBySong.get(song.id)));
+  }
+
   const api = {
     STORE_BY_KIND,
     stampOf,
     normalizeIncomingChanges,
     mergeByUpdatedAt,
-    applyTombstones
+    applyTombstones,
+    canonicalSourceAssetID,
+    projectCanonicalSong,
+    projectCanonicalSongs
   };
   g.AOSCanonicalWeb = api;
 
@@ -176,6 +226,10 @@
     state.masterCompositions = applyTombstones(
       mergeByUpdatedAt(state.masterCompositions || [], masterCompositions), tombstones, "masterComposition"
     );
+    // The existing web UI still renders through Song-shaped compatibility fields.
+    // Project canonical Master Composition into that in-memory view only; do not
+    // write the projection back to the legacy IndexedDB Song store.
+    state.songs = projectCanonicalSongs(state.songs, state.masterCompositions);
     if (typeof runtime.renderAll === "function") runtime.renderAll(false);
     return true;
   }
