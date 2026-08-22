@@ -42,7 +42,7 @@ public enum AudioComparisonEvidence {
 
         if let keyA = normalizedKey(assetA.musicalKey),
            let keyB = normalizedKey(assetB.musicalKey) {
-            if keyA.caseInsensitiveCompare(keyB) == .orderedSame {
+            if comparableKeyIdentity(keyA) == comparableKeyIdentity(keyB) {
                 parts.append("Same detected key")
             } else {
                 parts.append("Key \(keyA) → \(keyB)")
@@ -94,6 +94,47 @@ public enum AudioComparisonEvidence {
         guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty else { return nil }
         return key
+    }
+
+    /// Comparison-only normalization. Keep the observed spelling for display, but
+    /// do not tell the artist that C# and Db are different keys just because two
+    /// analyzers/platforms chose different enharmonic spellings.
+    private static func comparableKeyIdentity(_ key: String) -> String {
+        let normalized = key
+            .replacingOccurrences(of: "♯", with: "#")
+            .replacingOccurrences(of: "♭", with: "b")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = normalized.split(whereSeparator: { $0.isWhitespace })
+        guard let first = parts.first else { return normalized.lowercased() }
+
+        let pitch = canonicalPitch(String(first))
+        let rawMode = parts.dropFirst().joined(separator: " ").lowercased()
+        let mode: String
+        switch rawMode {
+        case "maj": mode = "major"
+        case "min": mode = "minor"
+        default: mode = rawMode
+        }
+        return "\(pitch)|\(mode)"
+    }
+
+    private static func canonicalPitch(_ pitch: String) -> String {
+        switch pitch.lowercased() {
+        case "cb": return "b"
+        case "c", "b#": return "c"
+        case "c#", "db": return "c#"
+        case "d": return "d"
+        case "d#", "eb": return "d#"
+        case "e", "fb": return "e"
+        case "e#", "f": return "f"
+        case "f#", "gb": return "f#"
+        case "g": return "g"
+        case "g#", "ab": return "g#"
+        case "a": return "a"
+        case "a#", "bb": return "a#"
+        case "b": return "b"
+        default: return pitch.lowercased()
+        }
     }
 
     private static func formatBPM(_ bpm: Double) -> String {
