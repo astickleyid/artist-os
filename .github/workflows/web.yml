@@ -24,3 +24,9 @@ jobs:
           done
       - name: Worker tests
         run: node worker/test/worker.test.js
+      - name: Install Playwright browser for canonical reload test
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Canonical web metadata survives browser reload
+        run: node tests/web/canonical-web.e2e.js
