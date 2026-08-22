@@ -9,7 +9,6 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Order")
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
-        state.addCanonicalSection(name: "Verse 2", songID: songID)
 
         let before = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
         let movedID = try XCTUnwrap(before.sections.last?.id)
@@ -43,9 +42,10 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Diverged Order")
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
-        state.addCanonicalSection(name: "Verse 2", songID: songID)
 
-        let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
+        let composition = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        state.catalog.setMasterComposition(composition)
+        try store.upsert(masterComposition: composition)
         XCTAssertGreaterThanOrEqual(composition.sections.count, 3)
         let movedID = composition.sections.last!.id
 
