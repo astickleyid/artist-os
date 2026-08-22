@@ -23,6 +23,36 @@ final class AudioComparisonEvidenceTests: XCTestCase {
         XCTAssertNil(AudioComparisonEvidence.summary(for: asset))
     }
 
+    func testRelativeSummaryReportsMeasuredTempoKeyAndDurationDifferences() {
+        let assetA = makeAsset(bpm: 120, key: "F minor", duration: 93)
+        let assetB = makeAsset(bpm: 122, key: "G minor", duration: 101)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "B 2 BPM faster · Key F minor → G minor · B 8s longer"
+        )
+    }
+
+    func testRelativeSummarySuppressesDetectorNoise() {
+        let assetA = makeAsset(bpm: 120.1, key: "F minor", duration: 93.2)
+        let assetB = makeAsset(bpm: 120.4, key: "f MINOR", duration: 93.7)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "Same detected tempo · Same detected key · Same duration"
+        )
+    }
+
+    func testRelativeSummaryUsesOnlyEvidenceAvailableOnBothSides() {
+        let assetA = makeAsset(bpm: 126, key: nil, duration: nil)
+        let assetB = makeAsset(bpm: 124, key: "A minor", duration: 150)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.relativeSummary(between: assetA, and: assetB),
+            "B 2 BPM slower"
+        )
+    }
+
     private func makeAsset(
         bpm: Double?,
         key: String?,
