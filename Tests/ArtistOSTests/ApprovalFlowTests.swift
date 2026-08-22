@@ -40,7 +40,7 @@ final class ApprovalFlowTests: XCTestCase {
 
         let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == song.id })
         let updatedSection = try XCTUnwrap(updatedSong.sections.first { $0.id == sectionID })
-        XCTAssertEqual(updatedSection.assetID, winner.id)
+        XCTAssertNil(updatedSection.assetID)
         XCTAssertEqual(updatedSection.state, .locked)
         XCTAssertEqual(updatedSong.progress, 0.2, accuracy: 0.001)
 
@@ -66,6 +66,9 @@ final class ApprovalFlowTests: XCTestCase {
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.decisions.count, 2)
         XCTAssertEqual(reloaded.decisions.last?.id, decision.id)
+        let persistedSong = try XCTUnwrap(reloaded.songs.first { $0.id == song.id })
+        let persistedLegacySection = try XCTUnwrap(persistedSong.sections.first { $0.id == sectionID })
+        XCTAssertNil(persistedLegacySection.assetID)
         let persistedComposition = try XCTUnwrap(reloaded.masterCompositions.first { $0.songID == song.id })
         let persistedSection = try XCTUnwrap(persistedComposition.sections.first { $0.id == sectionID })
         XCTAssertEqual(persistedSection.selection(.sourceAsset)?.referenceID, winner.id)
@@ -193,7 +196,7 @@ final class ApprovalFlowTests: XCTestCase {
             reason: "More balanced low end."
         )
 
-        XCTAssertEqual(state.catalog.songs[0].masterAssetID, winner.id)
+        XCTAssertNil(state.catalog.songs[0].masterAssetID)
         let decision = try XCTUnwrap(state.catalog.decisions.first)
         XCTAssertEqual(decision.target, .master)
         XCTAssertEqual(decision.selectedAssetID, winner.id)
@@ -204,7 +207,7 @@ final class ApprovalFlowTests: XCTestCase {
         XCTAssertEqual(decision.relatedEventIDs, [state.catalog.events.last!.id])
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertEqual(reloaded.songs[0].masterAssetID, winner.id)
+        XCTAssertNil(reloaded.songs[0].masterAssetID)
         XCTAssertEqual(reloaded.decisions.first?.selectedAssetID, winner.id)
         XCTAssertEqual(reloaded.masterCompositions.first?.outputAssetID, winner.id)
     }

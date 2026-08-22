@@ -163,7 +163,8 @@ final class DecisionEngineTests: XCTestCase {
         XCTAssertEqual(state.catalog.events.count, eventCountBefore + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionCountBefore)
 
-        // Persistence round-trip keeps canonical truth and the legacy mirror aligned.
+        // Persistence round-trip keeps canonical state and the still-supported
+        // state/confidence compatibility mirror aligned.
         var reloaded = store.loadCatalog(artistName: "T")
         let reloadedComposition = try XCTUnwrap(reloaded.masterComposition(for: songID))
         XCTAssertEqual(reloadedComposition.sections[2].state, .needsDecision)
@@ -176,11 +177,11 @@ final class DecisionEngineTests: XCTestCase {
 
         state.approveMasterDecision(songID: songID, assetID: mixB.id)
         XCTAssertEqual(state.catalog.masterComposition(for: songID)?.outputAssetID, mixB.id)
-        XCTAssertEqual(state.catalog.songs[0].masterAssetID, mixB.id)
+        XCTAssertNil(state.catalog.songs[0].masterAssetID, "Master approval must not repopulate the retired legacy mirror")
         XCTAssertEqual(state.pendingDecisions.count, 1)
 
         reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(reloaded.masterComposition(for: songID)?.outputAssetID, mixB.id)
-        XCTAssertEqual(reloaded.songs[0].masterAssetID, mixB.id)
+        XCTAssertNil(reloaded.songs[0].masterAssetID, "Retired legacy master mirror must remain empty after reload")
     }
 }
