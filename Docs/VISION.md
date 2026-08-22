@@ -75,7 +75,7 @@ Architecture per owner decision: one Worker (worker/src/index.js) in front of D1
 4. Wire Decisions into A/B, pin-master, and other approval flows. ✅
 5. Add Decisions + Master Composition to sync contract and conflict handling. ✅
 6. Migrate native macOS workspace to read/write the canonical model. ✅
-7. Retire legacy `Song.sections[].assetID`. Safety proof is complete: persisted canonical Master Composition survives cleared legacy source/master mirrors across GRDB reload. Remaining work is to remove obsolete compatibility write paths, verify cross-platform sync compatibility, and then delete the stored legacy field. 🚧
+7. Retire legacy `Song.sections[].assetID`. Safety proof is complete across GRDB reload, browser hydration/reload, and canonical sync with cleared legacy source/master mirrors. Approval/state/clear/add/remove/reorder compatibility writes are retired. Remaining work is to remove obsolete direct legacy mutation/destructive APIs, complete the final persistence/model audit, and then delete the stored legacy source/master fields. 🚧
 
 ## Deferred by design
 Batch DSP variant generation · collaboration · predictive career modeling.
