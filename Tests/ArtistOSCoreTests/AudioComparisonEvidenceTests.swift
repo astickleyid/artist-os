@@ -53,6 +53,41 @@ final class AudioComparisonEvidenceTests: XCTestCase {
         )
     }
 
+    func testArrangementReviewSignalFlagsLargeRelativeLengthShift() {
+        let assetA = makeAsset(bpm: nil, key: nil, duration: 100)
+        let assetB = makeAsset(bpm: nil, key: nil, duration: 112)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.arrangementReviewSignal(between: assetA, and: assetB),
+            "Arrangement check · B is 12% longer"
+        )
+    }
+
+    func testArrangementReviewSignalHandlesShorterCandidate() {
+        let assetA = makeAsset(bpm: nil, key: nil, duration: 100)
+        let assetB = makeAsset(bpm: nil, key: nil, duration: 90)
+
+        XCTAssertEqual(
+            AudioComparisonEvidence.arrangementReviewSignal(between: assetA, and: assetB),
+            "Arrangement check · B is 10% shorter"
+        )
+    }
+
+    func testArrangementReviewSignalRequiresAbsoluteAndRelativeDifference() {
+        XCTAssertNil(
+            AudioComparisonEvidence.arrangementReviewSignal(
+                between: makeAsset(bpm: nil, key: nil, duration: 100),
+                and: makeAsset(bpm: nil, key: nil, duration: 106)
+            )
+        )
+        XCTAssertNil(
+            AudioComparisonEvidence.arrangementReviewSignal(
+                between: makeAsset(bpm: nil, key: nil, duration: 300),
+                and: makeAsset(bpm: nil, key: nil, duration: 310)
+            )
+        )
+    }
+
     private func makeAsset(
         bpm: Double?,
         key: String?,
