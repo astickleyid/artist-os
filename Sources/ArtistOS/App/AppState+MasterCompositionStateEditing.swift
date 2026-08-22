@@ -72,8 +72,9 @@ extension AppState {
         )
     }
 
-    /// Updates a section's workflow state in canonical truth and the legacy
-    /// mirror together. This prevents state/confidence from diverging during migration.
+    /// Updates workflow state in canonical Master Composition. Song-level
+    /// progress/risk remain compatibility summaries, but legacy section state
+    /// and confidence are no longer rewritten during canonical edits.
     func setCanonicalSectionState(_ newState: SectionState, sectionID: UUID, songID: UUID) {
         guard let songIndex = catalog.songs.firstIndex(where: { $0.id == songID }) else { return }
 
@@ -84,18 +85,12 @@ extension AppState {
         guard oldState != newState else { return }
 
         var updatedSong = catalog.songs[songIndex]
-        guard let legacyIndex = updatedSong.sections.firstIndex(where: { $0.id == sectionID }) else { return }
 
         let timestamp = Date()
         composition.sections[canonicalIndex].state = newState
         if newState == .locked {
             composition.sections[canonicalIndex].confidence = max(composition.sections[canonicalIndex].confidence, 0.9)
         }
-        // Compatibility state follows canonical truth exactly. Independently
-        // carrying the old legacy confidence can preserve stale divergence and
-        // later poison an old-catalog projection if the canonical row is absent.
-        updatedSong.sections[legacyIndex].state = composition.sections[canonicalIndex].state
-        updatedSong.sections[legacyIndex].confidence = composition.sections[canonicalIndex].confidence
         composition.updatedAt = timestamp
         recomputeCanonicalMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
