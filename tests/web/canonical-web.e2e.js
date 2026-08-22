@@ -51,7 +51,16 @@ const assert = (condition, message) => {
             status: 'review',
             created: t - 1000,
             updatedAt: t,
-            sections: [],
+            sections: [{
+              id: ids.section,
+              name: 'Hook',
+              role: 'Melody',
+              assetId: 'legacy-source',
+              state: 'open',
+              conf: 0.1,
+              note: 'legacy mirror'
+            }],
+            masterAssetId: 'legacy-master',
             progress: 0,
             risk: 'In assembly'
           }
@@ -79,7 +88,7 @@ const assert = (condition, message) => {
               id: ids.section,
               name: 'Hook',
               role: 'hook',
-              state: 'locked',
+              state: 'needsDecision',
               confidence: 0.95,
               note: 'Canonical source survives reload',
               selections: [{ kind: 'sourceAsset', referenceId: ids.source }]
@@ -98,6 +107,7 @@ const assert = (condition, message) => {
       const song = state.songs.find(item => item.id === ids.song);
       const decision = (state.decisions || []).find(item => item.id === ids.decision);
       const master = (state.masterCompositions || []).find(item => item.id === ids.master);
+      const runtimeSection = song && song.sections && song.sections.find(item => item.id === ids.section);
       return {
         songTitle: song && song.title,
         decisionRationale: decision && decision.rationale,
@@ -105,6 +115,10 @@ const assert = (condition, message) => {
         sourceAssetId: master && master.sections && master.sections[0] &&
           master.sections[0].selections && master.sections[0].selections[0] &&
           master.sections[0].selections[0].referenceId,
+        runtimeMasterAssetId: song && song.masterAssetId,
+        runtimeSourceAssetId: runtimeSection && runtimeSection.assetId,
+        runtimeSectionState: runtimeSection && runtimeSection.state,
+        runtimeRisk: song && song.risk,
         eventPollution: state.events.some(event => event.id === ids.decision || event.id === ids.master)
       };
     }, ids);
@@ -113,6 +127,10 @@ const assert = (condition, message) => {
     assert(hydrated.decisionRationale === 'Artist selected this take', 'Creative Decision survives browser reload');
     assert(hydrated.outputAssetId === ids.source, 'Master Composition output survives browser reload');
     assert(hydrated.sourceAssetId === ids.source, 'canonical section source survives browser reload');
+    assert(hydrated.runtimeMasterAssetId === ids.source, 'web runtime current master follows canonical output');
+    assert(hydrated.runtimeSourceAssetId === ids.source, 'web runtime section source follows canonical selection');
+    assert(hydrated.runtimeSectionState === 'needsDecision', 'web runtime decision state follows canonical section');
+    assert(hydrated.runtimeRisk === 'Hook decision unresolved', 'web runtime risk follows canonical unresolved state');
     assert(hydrated.eventPollution === false, 'Decision/Master Composition are not misclassified as Creative Events');
 
     console.log('canonical web reload e2e passed');
