@@ -64,4 +64,45 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   assert(out.some(x => x.id === 'b'), 'newer local entity survives older tombstone');
 })();
 
+(function canonicalCompositionOverridesStaleSongMirrors() {
+  const song = {
+    id: 's1', title: 'Song', masterAssetId: 'legacy-master', progress: 1, risk: 'Master locked',
+    sections: [
+      { id: 'sec1', name: 'Hook', role: 'Melody', assetId: 'legacy-source', state: 'locked', conf: 1, note: 'legacy' },
+      { id: 'sec2', name: 'Bridge', role: 'Alt pocket', assetId: 'legacy-bridge', state: 'locked', conf: 1, note: '' }
+    ]
+  };
+  const composition = {
+    id: 'm1', songId: 's1', outputAssetId: 'canonical-master', updatedAt: 50,
+    sections: [
+      {
+        id: 'sec1', name: 'Hook', role: 'hook', state: 'needsDecision', confidence: 0.4, note: 'canonical',
+        selections: [{ kind: 'sourceAsset', referenceId: 'canonical-source' }]
+      },
+      {
+        id: 'sec2', name: 'Bridge', role: 'bridge', state: 'open', confidence: 0.2, note: '', selections: []
+      }
+    ]
+  };
+  const projected = C.projectCanonicalSong(song, composition);
+  assert(projected.masterAssetId === 'canonical-master', 'canonical output overrides stale Song master mirror');
+  assert(projected.sections[0].assetId === 'canonical-source', 'canonical source overrides stale Song section mirror');
+  assert(projected.sections[0].state === 'needsDecision', 'canonical state drives the compatibility decision view');
+  assert(projected.sections[0].conf === 0.4, 'canonical confidence drives the compatibility view');
+  assert(projected.sections[0].note === 'canonical', 'canonical note drives the compatibility view');
+  assert(projected.sections[1].assetId === null, 'canonical nil source does not resurrect stale Song source');
+  assert(projected.progress === 0, 'progress is derived from canonical section states');
+  assert(projected.risk === 'Hook decision unresolved', 'risk is derived from canonical unresolved state');
+})();
+
+(function newestCompositionWinsRuntimeProjection() {
+  const songs = [{ id: 's1', sections: [], masterAssetId: 'legacy' }];
+  const compositions = [
+    { id: 'old', songId: 's1', updatedAt: 10, outputAssetId: 'old-master', sections: [] },
+    { id: 'new', songId: 's1', updatedAt: 20, outputAssetId: 'new-master', sections: [] }
+  ];
+  const projected = C.projectCanonicalSongs(songs, compositions);
+  assert(projected[0].masterAssetId === 'new-master', 'newest canonical composition wins duplicate runtime cache entries');
+})();
+
 console.log('canonical-web tests passed');
