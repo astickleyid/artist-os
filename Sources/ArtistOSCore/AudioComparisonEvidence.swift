@@ -35,6 +35,8 @@ public enum AudioComparisonEvidence {
             let delta = bpmB - bpmA
             if abs(delta) < 0.5 {
                 parts.append("Same detected tempo")
+            } else if areHalfDoubleTempoEquivalent(bpmA, bpmB) {
+                parts.append("Same tempo family (half/double-time)")
             } else {
                 parts.append("B \(formatDelta(abs(delta))) BPM \(delta > 0 ? "faster" : "slower")")
             }
@@ -94,6 +96,14 @@ public enum AudioComparisonEvidence {
         guard let key = key?.trimmingCharacters(in: .whitespacesAndNewlines),
               !key.isEmpty else { return nil }
         return key
+    }
+
+    /// Comparison-only normalization. Tempo detectors can legitimately settle on
+    /// half-time or double-time interpretations of the same pulse. Do not present
+    /// that octave ambiguity as a huge creative tempo change.
+    private static func areHalfDoubleTempoEquivalent(_ a: Double, _ b: Double) -> Bool {
+        let tolerance = 1.0
+        return abs((a * 2) - b) < tolerance || abs((b * 2) - a) < tolerance
     }
 
     /// Comparison-only normalization. Keep the observed spelling for display, but
