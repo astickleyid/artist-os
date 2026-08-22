@@ -9,27 +9,17 @@ private let masterEditingLogger = Logger(
 
 @MainActor
 extension AppState {
-    /// Clears one section's current source as an explicit artist decision while
-    /// keeping the legacy Song mirror and canonical Master Composition atomic.
-    /// This is the inverse of approveSectionDecision and prevents the workspace
-    /// from silently mutating only Song.sections during the migration.
+    /// Clears one section's current source in canonical Master Composition as an
+    /// explicit artist decision. Song-level progress/risk remain compatibility
+    /// summaries, but legacy section source/state/confidence are no longer rewritten.
     func clearCanonicalSectionSource(sectionID: UUID, songID: UUID) {
         guard let songIndex = catalog.songs.firstIndex(where: { $0.id == songID }),
-              let sectionIndex = catalog.songs[songIndex].sections.firstIndex(where: { $0.id == sectionID }),
               var composition = catalog.masterComposition(for: songID),
               let compositionSectionIndex = composition.sections.firstIndex(where: { $0.id == sectionID })
         else { return }
 
         let canonicalSection = composition.sections[compositionSectionIndex]
-        guard let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID else {
-            healLegacySectionMirrorIfNeeded(
-                songIndex: songIndex,
-                sectionIndex: sectionIndex,
-                canonicalSection: canonicalSection,
-                composition: composition
-            )
-            return
-        }
+        guard let oldSourceID = canonicalSection.selection(.sourceAsset)?.referenceID else { return }
 
         let timestamp = Date()
         composition.sections[compositionSectionIndex].clearSelection(.sourceAsset)
@@ -38,9 +28,6 @@ extension AppState {
         composition.updatedAt = timestamp
 
         var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections[sectionIndex].assetID = nil
-        updatedSong.sections[sectionIndex].state = .open
-        updatedSong.sections[sectionIndex].confidence = 0
         recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
@@ -211,51 +198,6 @@ extension AppState {
             composition: composition,
             failureMessage: "Remove master slot transaction failed"
         )
-    }
-
-    /// Canonical truth may already be empty while an old Song compatibility
-    /// mirror is stale. Heal that mirror without manufacturing creative history.
-    private func healLegacySectionMirrorIfNeeded(
-        songIndex: Int,
-        sectionIndex: Int,
-        canonicalSection: MasterCompositionSection,
-        composition: MasterComposition
-    ) {
-        let legacySection = catalog.songs[songIndex].sections[sectionIndex]
-        guard legacySection.assetID != nil
-                || legacySection.state != canonicalSection.state
-                || legacySection.confidence != canonicalSection.confidence
-        else { return }
-
-        let timestamp = Date()
-        var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections[sectionIndex].assetID = nil
-        updatedSong.sections[sectionIndex].state = canonicalSection.state
-        updatedSong.sections[sectionIndex].confidence = canonicalSection.confidence
-        recomputeMasterProgress(&updatedSong, composition: composition)
-        updatedSong.updatedAt = timestamp
-
-        let syncChanges: [SyncLogic.JSONDict] = syncStatus == .on
-            ? [SyncLogic.change(forSong: updatedSong)]
-            : []
-
-        do {
-            try store.commitMasterAnnotation(
-                song: updatedSong,
-                masterComposition: composition,
-                syncChanges: syncChanges
-            )
-        } catch {
-            masterEditingLogger.error("Heal legacy master mirror failed: \(error.localizedDescription)")
-            return
-        }
-
-        catalog.songs[songIndex] = updatedSong
-        catalog.setMasterComposition(composition)
-
-        if !syncChanges.isEmpty {
-            resumeCanonicalSyncOutbox()
-        }
     }
 
     private func commitMasterEdit(
