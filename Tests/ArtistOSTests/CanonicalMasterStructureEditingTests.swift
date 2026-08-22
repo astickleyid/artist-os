@@ -4,27 +4,26 @@ import ArtistOSCore
 
 @MainActor
 final class CanonicalMasterStructureEditingTests: XCTestCase {
-    func testAddingSlotWritesCanonicalLegacyEventAndDecisionTogether() throws {
+    func testAddingSlotWritesCanonicalHistoryWithoutExtendingLegacyMembership() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Structure")
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
-        let originalCount = try XCTUnwrap(state.catalog.songs.first?.sections.count)
+        let originalLegacyIDs = try XCTUnwrap(state.catalog.songs.first?.sections.map(\.id))
+        let originalCount = originalLegacyIDs.count
         let eventCount = state.catalog.events.count
         let decisionCount = state.catalog.decisions.count
 
         state.addCanonicalSection(name: "Verse 2", songID: songID)
 
         let song = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
-        XCTAssertEqual(song.sections.count, originalCount + 1)
-        let addedLegacy = try XCTUnwrap(song.sections.last)
-        XCTAssertEqual(addedLegacy.name, "Verse 2")
+        XCTAssertEqual(song.sections.map(\.id), originalLegacyIDs)
 
         let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
         XCTAssertEqual(composition.sections.count, originalCount + 1)
         let addedCanonical = try XCTUnwrap(composition.sections.last)
-        XCTAssertEqual(addedCanonical.id, addedLegacy.id)
         XCTAssertEqual(addedCanonical.name, "Verse 2")
+        XCTAssertFalse(song.sections.contains { $0.id == addedCanonical.id })
 
         XCTAssertEqual(state.catalog.events.count, eventCount + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionCount + 1)
@@ -36,13 +35,13 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         XCTAssertTrue(decision.reason?.contains("Verse 2") == true)
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.sections.last?.id, addedLegacy.id)
-        XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.sections.last?.id, addedLegacy.id)
+        XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.sections.map(\.id), originalLegacyIDs)
+        XCTAssertEqual(reloaded.masterCompositions.first { $0.songID == songID }?.sections.last?.id, addedCanonical.id)
         XCTAssertTrue(reloaded.events.contains { $0.id == event.id })
         XCTAssertTrue(reloaded.decisions.contains { $0.id == decision.id })
     }
 
-    func testRemovingSlotRemovesCurrentCanonicalTruthButPreservesHistory() throws {
+    func testRemovingSlotChangesCanonicalTruthWithoutShrinkingLegacyMembership() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Remove")
@@ -80,13 +79,15 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         state.catalog.songs[songIndex].sections[sectionIndex].assetID = legacyAsset.id
         try store.upsert(song: state.catalog.songs[songIndex])
 
+        let legacyBeforeRemoval = state.catalog.songs[songIndex].sections
         let decisionsBeforeRemoval = state.catalog.decisions.count
         let eventsBeforeRemoval = state.catalog.events.count
 
         state.removeCanonicalSection(sectionID: sectionID, songID: songID)
 
         let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
-        XCTAssertFalse(updatedSong.sections.contains { $0.id == sectionID })
+        XCTAssertEqual(updatedSong.sections, legacyBeforeRemoval)
+        XCTAssertEqual(updatedSong.sections.first { $0.id == sectionID }?.assetID, legacyAsset.id)
         let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
         XCTAssertFalse(composition.sections.contains { $0.id == sectionID })
 
@@ -103,7 +104,11 @@ final class CanonicalMasterStructureEditingTests: XCTestCase {
         XCTAssertEqual(removalDecision.relatedEventIDs, [removalEvent.id])
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertFalse(reloaded.songs.first { $0.id == songID }?.sections.contains { $0.id == sectionID } ?? true)
+        XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.sections, legacyBeforeRemoval)
+        XCTAssertEqual(
+            reloaded.songs.first { $0.id == songID }?.sections.first { $0.id == sectionID }?.assetID,
+            legacyAsset.id
+        )
         XCTAssertFalse(reloaded.masterCompositions.first { $0.songID == songID }?.sections.contains { $0.id == sectionID } ?? true)
         XCTAssertTrue(reloaded.assets.contains { $0.id == canonicalAsset.id })
         XCTAssertTrue(reloaded.assets.contains { $0.id == legacyAsset.id })
