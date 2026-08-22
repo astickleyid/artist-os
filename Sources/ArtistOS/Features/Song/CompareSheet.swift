@@ -69,6 +69,14 @@ struct CompareSheet: View {
                         .lineLimit(2)
                 }
 
+                if let assetA,
+                   let assetB,
+                   let arrangementSignal = AudioComparisonEvidence.arrangementReviewSignal(between: assetA, and: assetB) {
+                    Text(arrangementSignal)
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(AOSTheme.gold)
+                }
+
                 if !isMasterMode {
                     Text("Candidate order uses current-source and version/recency signals only. Newer does not mean better — you decide by listening.")
                         .font(.caption2)
