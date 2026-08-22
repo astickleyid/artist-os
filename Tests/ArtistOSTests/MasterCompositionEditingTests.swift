@@ -179,7 +179,23 @@ final class MasterCompositionEditingTests: XCTestCase {
         XCTAssertEqual(event.beforeAssetID, canonicalAsset.id)
         XCTAssertEqual(decision.rejectedAssetIDs, [canonicalAsset.id])
         XCTAssertFalse(decision.rejectedAssetIDs.contains(staleLegacyAsset.id))
-        XCTAssertNil(state.catalog.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID })
+
+        let legacySection = try XCTUnwrap(
+            state.catalog.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID }
+        )
+        XCTAssertEqual(legacySection.assetID, staleLegacyAsset.id)
+        XCTAssertNil(
+            state.catalog.masterCompositions.first { $0.songID == song.id }?.sections.first { $0.id == sectionID }
+        )
+
+        let reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(
+            reloaded.songs.first { $0.id == song.id }?.sections.first { $0.id == sectionID }?.assetID,
+            staleLegacyAsset.id
+        )
+        XCTAssertNil(
+            reloaded.masterCompositions.first { $0.songID == song.id }?.sections.first { $0.id == sectionID }
+        )
     }
 
     func testRemovingCanonicalSectionDerivesProgressFromCanonicalComposition() throws {
