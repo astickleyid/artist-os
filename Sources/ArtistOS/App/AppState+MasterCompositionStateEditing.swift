@@ -9,10 +9,9 @@ private let masterStateEditingLogger = Logger(
 
 @MainActor
 extension AppState {
-    /// Reorders a master slot in canonical truth and then rebuilds the legacy
-    /// compatibility mirror from canonical identity order. This safely heals
-    /// order-only divergence instead of applying the same offset to two
-    /// potentially different starting positions.
+    /// Reorders a master slot in canonical truth without rewriting legacy
+    /// Song.sections membership or order. Legacy structure is migration-only
+    /// compatibility data and must not block a valid canonical reorder.
     func moveCanonicalSection(sectionID: UUID, songID: UUID, offset: Int) {
         guard offset != 0,
               let songIndex = catalog.songs.firstIndex(where: { $0.id == songID })
@@ -24,26 +23,11 @@ extension AppState {
         let destination = canonicalIndex + offset
         guard destination >= 0, destination < composition.sections.count else { return }
 
-        var updatedSong = catalog.songs[songIndex]
-        let canonicalIDs = Set(composition.sections.map(\.id))
-        let legacyIDs = Set(updatedSong.sections.map(\.id))
-        // A reorder can safely heal order divergence only when both models
-        // describe the same section identities. Membership migration remains a
-        // separate canonical add/remove concern; never drop legacy-only slots here.
-        guard canonicalIDs == legacyIDs else {
-            masterStateEditingLogger.error("Move master slot aborted: canonical/legacy section identities diverged")
-            return
-        }
-        let legacyByID = Dictionary(uniqueKeysWithValues: updatedSong.sections.map { ($0.id, $0) })
-
         let timestamp = Date()
         composition.sections.swapAt(canonicalIndex, destination)
         composition.updatedAt = timestamp
-        updatedSong.sections = composition.sections.compactMap { legacyByID[$0.id] }
-        guard updatedSong.sections.count == composition.sections.count else {
-            masterStateEditingLogger.error("Move master slot aborted: failed to rebuild legacy order from canonical identity")
-            return
-        }
+
+        var updatedSong = catalog.songs[songIndex]
         updatedSong.updatedAt = timestamp
 
         let section = composition.sections[destination]
