@@ -4,13 +4,14 @@ import ArtistOSCore
 
 @MainActor
 final class CanonicalMasterStateEditingTests: XCTestCase {
-    func testMoveCanonicalSectionKeepsCanonicalAndLegacyOrderAligned() throws {
+    func testMoveCanonicalSectionLeavesLegacyOrderUntouched() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
         state.createSong(title: "Order")
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
 
         let before = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
+        let legacyOrder = before.sections.map(\.id)
         let movedID = try XCTUnwrap(before.sections.last?.id)
         let eventCount = state.catalog.events.count
         let decisionCount = state.catalog.decisions.count
@@ -19,8 +20,9 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
 
         let song = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
         let composition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
-        XCTAssertEqual(song.sections.map(\.id), composition.sections.map(\.id))
-        XCTAssertEqual(song.sections[song.sections.count - 2].id, movedID)
+        XCTAssertEqual(song.sections.map(\.id), legacyOrder)
+        XCTAssertNotEqual(song.sections.map(\.id), composition.sections.map(\.id))
+        XCTAssertEqual(composition.sections[composition.sections.count - 2].id, movedID)
         XCTAssertEqual(state.catalog.events.count, eventCount + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionCount + 1)
 
@@ -33,41 +35,54 @@ final class CanonicalMasterStateEditingTests: XCTestCase {
         let reloaded = store.loadCatalog(artistName: "T")
         XCTAssertEqual(
             reloaded.songs.first { $0.id == songID }?.sections.map(\.id),
-            reloaded.masterCompositions.first { $0.songID == songID }?.sections.map(\.id)
+            legacyOrder
+        )
+        XCTAssertEqual(
+            reloaded.masterCompositions.first { $0.songID == songID }?.sections[composition.sections.count - 2].id,
+            movedID
         )
     }
 
-    func testMoveCanonicalSectionHealsOrderOnlyLegacyDivergence() throws {
+    func testMoveCanonicalSectionSupportsCanonicalOnlyMembership() throws {
         let store = CatalogStore(database: try AppDatabase.inMemory())
         let state = AppState(store: store, seedIfNeeded: false, enableWatching: false)
-        state.createSong(title: "Diverged Order")
+        state.createSong(title: "Canonical Only Order")
         let songID = try XCTUnwrap(state.catalog.songs.first?.id)
 
-        let composition = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        var composition = try XCTUnwrap(state.catalog.masterComposition(for: songID))
+        let canonicalOnlyID = UUID()
+        composition.sections.append(
+            MasterCompositionSection(
+                id: canonicalOnlyID,
+                name: "Post Hook",
+                role: "Custom",
+                selections: [],
+                state: .open,
+                confidence: 0,
+                note: ""
+            )
+        )
+        composition.updatedAt = Date()
         state.catalog.setMasterComposition(composition)
         try store.upsert(masterComposition: composition)
-        XCTAssertGreaterThanOrEqual(composition.sections.count, 3)
-        let movedID = composition.sections.last!.id
 
-        let songIndex = try XCTUnwrap(state.catalog.songs.firstIndex { $0.id == songID })
-        state.catalog.songs[songIndex].sections.swapAt(0, 1)
-        try store.upsert(song: state.catalog.songs[songIndex])
-        XCTAssertNotEqual(
-            state.catalog.songs[songIndex].sections.map(\.id),
-            composition.sections.map(\.id)
-        )
+        let legacyOrder = try XCTUnwrap(state.catalog.songs.first { $0.id == songID }).sections.map(\.id)
+        XCTAssertFalse(legacyOrder.contains(canonicalOnlyID))
+        XCTAssertEqual(composition.sections.last?.id, canonicalOnlyID)
 
-        state.moveCanonicalSection(sectionID: movedID, songID: songID, offset: -1)
+        state.moveCanonicalSection(sectionID: canonicalOnlyID, songID: songID, offset: -1)
 
         let updatedSong = try XCTUnwrap(state.catalog.songs.first { $0.id == songID })
         let updatedComposition = try XCTUnwrap(state.catalog.masterCompositions.first { $0.songID == songID })
-        XCTAssertEqual(updatedSong.sections.map(\.id), updatedComposition.sections.map(\.id))
-        XCTAssertEqual(updatedComposition.sections[updatedComposition.sections.count - 2].id, movedID)
+        XCTAssertEqual(updatedSong.sections.map(\.id), legacyOrder)
+        XCTAssertFalse(updatedSong.sections.map(\.id).contains(canonicalOnlyID))
+        XCTAssertEqual(updatedComposition.sections[updatedComposition.sections.count - 2].id, canonicalOnlyID)
 
         let reloaded = store.loadCatalog(artistName: "T")
+        XCTAssertEqual(reloaded.songs.first { $0.id == songID }?.sections.map(\.id), legacyOrder)
         XCTAssertEqual(
-            reloaded.songs.first { $0.id == songID }?.sections.map(\.id),
-            reloaded.masterCompositions.first { $0.songID == songID }?.sections.map(\.id)
+            reloaded.masterCompositions.first { $0.songID == songID }?.sections[updatedComposition.sections.count - 2].id,
+            canonicalOnlyID
         )
     }
 
