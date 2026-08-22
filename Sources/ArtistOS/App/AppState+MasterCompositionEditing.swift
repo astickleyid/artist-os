@@ -66,9 +66,9 @@ extension AppState {
         )
     }
 
-    /// Adds a structural slot to both the canonical composition and the legacy
-    /// compatibility mirror in one transaction. The artist action is preserved
-    /// as a Decision; the Event remains the factual record of the structure edit.
+    /// Adds a structural slot to canonical Master Composition without extending
+    /// the legacy Song.sections compatibility mirror. The artist action is
+    /// preserved as a Decision; the Event remains the factual structure record.
     func addCanonicalSection(name: String, songID: UUID) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -77,15 +77,6 @@ extension AppState {
 
         let timestamp = Date()
         let sectionID = UUID()
-        let legacySection = MasterSection(
-            id: sectionID,
-            name: trimmed,
-            role: "Custom",
-            assetID: nil,
-            state: .open,
-            confidence: 0,
-            note: ""
-        )
         let canonicalSection = MasterCompositionSection(
             id: sectionID,
             name: trimmed,
@@ -102,7 +93,6 @@ extension AppState {
         composition.updatedAt = timestamp
 
         var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections.append(legacySection)
         recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
@@ -139,9 +129,10 @@ extension AppState {
         )
     }
 
-    /// Removes a structural slot from canonical truth and the compatibility
-    /// mirror atomically. Existing selections disappear from current intent but
-    /// remain recoverable through immutable Assets, Events and Decision history.
+    /// Removes a structural slot from canonical truth without deleting it from
+    /// the legacy Song.sections compatibility mirror. Existing selections leave
+    /// current intent but remain recoverable through immutable Assets, Events,
+    /// Decision history, and legacy compatibility data during migration.
     func removeCanonicalSection(sectionID: UUID, songID: UUID) {
         guard let songIndex = catalog.songs.firstIndex(where: { $0.id == songID }) else { return }
 
@@ -155,7 +146,6 @@ extension AppState {
         composition.updatedAt = timestamp
 
         var updatedSong = catalog.songs[songIndex]
-        updatedSong.sections.removeAll { $0.id == sectionID }
         recomputeMasterProgress(&updatedSong, composition: composition)
         updatedSong.updatedAt = timestamp
 
