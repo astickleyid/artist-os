@@ -15,6 +15,8 @@ struct CompareSheet: View {
     @State private var assetAID: UUID?
     @State private var assetBID: UUID?
     @State private var reason: String = ""
+    @State private var structuralEvidence: String?
+    @State private var isAnalyzingStructure = false
 
     private var isMasterMode: Bool { section == nil }
     private var candidates: [Asset] {
@@ -32,6 +34,10 @@ struct CompareSheet: View {
     }
     private var assetA: Asset? { state.asset(id: assetAID) }
     private var assetB: Asset? { state.asset(id: assetBID) }
+    private var structuralPairKey: String {
+        guard isMasterMode else { return "section-mode" }
+        return "\(assetAID?.uuidString ?? "none")|\(assetBID?.uuidString ?? "none")"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -77,6 +83,28 @@ struct CompareSheet: View {
                         .foregroundStyle(AOSTheme.gold)
                 }
 
+                if isMasterMode {
+                    if isAnalyzingStructure {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Analyzing detected structure…")
+                                .font(.caption2)
+                                .foregroundStyle(AOSTheme.muted)
+                        }
+                    } else if let structuralEvidence {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Detected structure · \(structuralEvidence)")
+                                .font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(AOSTheme.gold)
+                                .lineLimit(2)
+                            Text("Audio segmentation is derived analysis, not arrangement truth. Listen to confirm.")
+                                .font(.caption2)
+                                .foregroundStyle(AOSTheme.muted)
+                        }
+                    }
+                }
+
                 if !isMasterMode {
                     Text("Candidate order uses current-source and version/recency signals only. Newer does not mean better — you decide by listening.")
                         .font(.caption2)
@@ -115,6 +143,9 @@ struct CompareSheet: View {
         .padding(20)
         .frame(width: 560)
         .onAppear(perform: seedDefaults)
+        .task(id: structuralPairKey) {
+            await refreshStructuralEvidence()
+        }
         .onDisappear { audio.stop() }
     }
 
@@ -215,6 +246,35 @@ struct CompareSheet: View {
             assetAID = currentSourceID.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
             assetBID = ids.first { $0 != assetAID } ?? ids.dropFirst().first
         }
+    }
+
+    @MainActor
+    private func refreshStructuralEvidence() async {
+        guard isMasterMode,
+              let assetA,
+              let assetB,
+              assetA.id != assetB.id,
+              audio.canPlay(assetA),
+              audio.canPlay(assetB) else {
+            structuralEvidence = nil
+            isAnalyzingStructure = false
+            return
+        }
+
+        structuralEvidence = nil
+        isAnalyzingStructure = true
+
+        async let resultA = StructuralAnalysisStore.shared.result(for: assetA)
+        async let resultB = StructuralAnalysisStore.shared.result(for: assetB)
+        let (segmentationA, segmentationB) = await (resultA, resultB)
+
+        guard !Task.isCancelled else { return }
+        isAnalyzingStructure = false
+        guard let segmentationA, let segmentationB else { return }
+        structuralEvidence = StructuralComparisonEvidence.summary(
+            between: segmentationA,
+            and: segmentationB
+        )
     }
 
     private func choose(_ winner: Asset) {
