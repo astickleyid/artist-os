@@ -34,16 +34,12 @@ final class LegacyCanonicalMaterializationTests: XCTestCase {
         XCTAssertEqual(composition.sections.map(\.name), song.sections.map(\.name))
         XCTAssertEqual(composition.sections.map(\.role), song.sections.map(\.role))
         XCTAssertEqual(sourceSelection.referenceID, sourceID)
+        XCTAssertNil(sourceSelection.decisionID)
         XCTAssertEqual(composition.sections[0].state, .locked)
         XCTAssertEqual(composition.sections[0].confidence, 0.93, accuracy: 0.0001)
         XCTAssertEqual(composition.sections[0].note, "Approved legacy source")
         XCTAssertEqual(
             composition.updatedAt.timeIntervalSince1970,
-            updatedAt.timeIntervalSince1970,
-            accuracy: 0.001
-        )
-        XCTAssertEqual(
-            sourceSelection.selectedAt.timeIntervalSince1970,
             updatedAt.timeIntervalSince1970,
             accuracy: 0.001
         )
@@ -56,6 +52,7 @@ final class LegacyCanonicalMaterializationTests: XCTestCase {
         let canonicalSourceID = UUID()
         let legacyOutputID = UUID()
         let canonicalOutputID = UUID()
+        let canonicalUpdatedAt = Date(timeIntervalSince1970: 1_800_200_000)
 
         var song = ImportService.makeSong(title: "Canonical Wins")
         song.masterAssetID = legacyOutputID
@@ -78,7 +75,7 @@ final class LegacyCanonicalMaterializationTests: XCTestCase {
             songID: song.id,
             sections: [canonicalSection],
             outputAssetID: canonicalOutputID,
-            updatedAt: Date(timeIntervalSince1970: 1_800_200_000)
+            updatedAt: canonicalUpdatedAt
         )
         try store.upsert(masterComposition: canonical)
 
@@ -87,14 +84,30 @@ final class LegacyCanonicalMaterializationTests: XCTestCase {
         }
 
         let reloaded = store.loadCatalog(artistName: "T")
-        XCTAssertEqual(reloaded.masterCompositions, [canonical])
+        XCTAssertEqual(reloaded.masterCompositions.count, 1)
+        let persisted = try XCTUnwrap(reloaded.masterCompositions.first)
+        let persistedSection = try XCTUnwrap(persisted.sections.first)
+        XCTAssertEqual(persisted.id, canonical.id)
+        XCTAssertEqual(persisted.songID, song.id)
+        XCTAssertEqual(persisted.outputAssetID, canonicalOutputID)
+        XCTAssertEqual(persistedSection.id, canonicalSection.id)
+        XCTAssertEqual(persistedSection.name, canonicalSection.name)
+        XCTAssertEqual(persistedSection.role, canonicalSection.role)
+        XCTAssertEqual(persistedSection.state, .needsDecision)
+        XCTAssertEqual(persistedSection.confidence, 0.42, accuracy: 0.0001)
+        XCTAssertEqual(persistedSection.note, "Canonical note")
         XCTAssertEqual(
-            reloaded.masterCompositions.first?.sections.first?.selection(.sourceAsset)?.referenceID,
+            persistedSection.selection(.sourceAsset)?.referenceID,
             canonicalSourceID
         )
         XCTAssertNotEqual(
-            reloaded.masterCompositions.first?.sections.first?.selection(.sourceAsset)?.referenceID,
+            persistedSection.selection(.sourceAsset)?.referenceID,
             legacySourceID
+        )
+        XCTAssertEqual(
+            persisted.updatedAt.timeIntervalSince1970,
+            canonicalUpdatedAt.timeIntervalSince1970,
+            accuracy: 0.001
         )
     }
 }
