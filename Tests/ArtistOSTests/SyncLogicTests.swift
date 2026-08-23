@@ -4,18 +4,23 @@ import ArtistOSCore
 
 final class SyncLogicTests: XCTestCase {
 
-    func testSongPayloadIncludesCoreFields() {
-        let section = MasterSection(id: UUID(), name: "Hook", role: "hook", assetID: nil,
+    func testSongPayloadIncludesCoreFieldsButOmitsRetiredSourceMirrors() {
+        let sectionAssetID = UUID()
+        let masterAssetID = UUID()
+        let section = MasterSection(id: UUID(), name: "Hook", role: "hook", assetID: sectionAssetID,
                                      state: .open, confidence: 0, note: "")
         let song = Song(id: UUID(), title: "Night Drive", era: "2026", status: .review,
-                         progress: 0.5, qualityScore: 80, risk: "low", sections: [section])
+                        progress: 0.5, qualityScore: 80, risk: "low", sections: [section],
+                        masterAssetID: masterAssetID)
         let change = SyncLogic.change(forSong: song)
         XCTAssertEqual(change["kind"] as? String, "song")
         XCTAssertEqual(change["id"] as? String, song.id.uuidString)
         let data = change["data"] as? SyncLogic.JSONDict
         XCTAssertEqual(data?["title"] as? String, "Night Drive")
+        XCTAssertNil(data?["masterAssetId"], "current master belongs in MasterComposition sync")
         let sections = data?["sections"] as? [SyncLogic.JSONDict]
         XCTAssertEqual(sections?.first?["name"] as? String, "Hook")
+        XCTAssertNil(sections?.first?["assetID"], "current section source belongs in MasterComposition sync")
     }
 
     func testTombstoneCarriesNoData() {
@@ -73,14 +78,45 @@ final class SyncLogicTests: XCTestCase {
         XCTAssertNil(SyncLogic.mergedAsset(payload: [:], updatedAt: Date(), existing: nil))
     }
 
-    func testSectionRoundTrip() {
+    func testLegacySectionDecoderStillAcceptsSourceMirrorFromOlderClients() {
+        let assetID = UUID()
+        let dict: SyncLogic.JSONDict = [
+            "id": UUID().uuidString,
+            "name": "Bridge",
+            "role": "bridge",
+            "assetID": assetID.uuidString,
+            "state": SectionState.locked.rawValue,
+            "confidence": 0.9,
+            "note": "great take"
+        ]
+        let decoded = SyncLogic.section(from: dict)
+        XCTAssertEqual(decoded?.state, .locked)
+        XCTAssertEqual(decoded?.assetID, assetID)
+        XCTAssertEqual(decoded?.note, "great take")
+    }
+
+    func testLegacySongDecoderStillAcceptsMasterMirrorFromOlderClients() {
+        let songID = UUID()
+        let masterAssetID = UUID()
+        let payload: SyncLogic.JSONDict = [
+            "id": songID.uuidString,
+            "title": "Legacy",
+            "masterAssetId": masterAssetID.uuidString,
+            "sections": []
+        ]
+        let merged = SyncLogic.mergedSong(payload: payload, updatedAt: Date(), existing: nil)
+        XCTAssertEqual(merged?.masterAssetID, masterAssetID)
+    }
+
+    func testSectionEncodingOmitsRetiredSourceMirror() {
         let section = MasterSection(id: UUID(), name: "Bridge", role: "bridge",
                                      assetID: UUID(), state: .locked, confidence: 0.9, note: "great take")
         let dict = SyncLogic.dict(fromSection: section)
+        XCTAssertNil(dict["assetID"])
         let decoded = SyncLogic.section(from: dict)
         XCTAssertEqual(decoded?.id, section.id)
         XCTAssertEqual(decoded?.state, .locked)
-        XCTAssertEqual(decoded?.assetID, section.assetID)
+        XCTAssertNil(decoded?.assetID)
         XCTAssertEqual(decoded?.note, "great take")
     }
 }
