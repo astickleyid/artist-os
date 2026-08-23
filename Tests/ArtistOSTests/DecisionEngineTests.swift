@@ -133,11 +133,13 @@ final class DecisionEngineTests: XCTestCase {
         let songID = state.catalog.songs[0].id
 
         // Materialize canonical truth while deliberately making the legacy
-        // mirror disagree. The automatic engine must follow canonical state.
+        // mirror disagree. The automatic engine must follow canonical state
+        // without repairing the retired mirror.
         let canonicalBefore = try XCTUnwrap(state.catalog.masterComposition(for: songID))
         state.catalog.setMasterComposition(canonicalBefore)
         try store.upsert(masterComposition: canonicalBefore)
         state.catalog.songs[0].sections[2].state = .locked
+        state.catalog.songs[0].sections[2].confidence = 0.97
         try store.upsert(song: state.catalog.songs[0])
 
         state.catalog.assets.append(asset(.hook, "take1", 1, songID: songID))
@@ -150,7 +152,8 @@ final class DecisionEngineTests: XCTestCase {
         let canonicalAfter = try XCTUnwrap(state.catalog.masterComposition(for: songID))
         XCTAssertEqual(canonicalAfter.sections[2].state, .needsDecision)
         XCTAssertGreaterThanOrEqual(canonicalAfter.sections[2].confidence, 0.5)
-        XCTAssertEqual(state.catalog.songs[0].sections[2].state, .needsDecision)
+        XCTAssertEqual(state.catalog.songs[0].sections[2].state, .locked)
+        XCTAssertEqual(state.catalog.songs[0].sections[2].confidence, 0.97, accuracy: 0.0001)
         XCTAssertEqual(state.catalog.events.count, eventCountBefore + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionCountBefore)
         XCTAssertTrue(state.catalog.events.contains {
@@ -163,12 +166,13 @@ final class DecisionEngineTests: XCTestCase {
         XCTAssertEqual(state.catalog.events.count, eventCountBefore + 1)
         XCTAssertEqual(state.catalog.decisions.count, decisionCountBefore)
 
-        // Persistence round-trip keeps canonical state and the still-supported
-        // state/confidence compatibility mirror aligned.
+        // Persistence round-trip keeps canonical state while leaving the
+        // retired legacy state/confidence mirror untouched.
         var reloaded = store.loadCatalog(artistName: "T")
         let reloadedComposition = try XCTUnwrap(reloaded.masterComposition(for: songID))
         XCTAssertEqual(reloadedComposition.sections[2].state, .needsDecision)
-        XCTAssertEqual(reloaded.songs[0].sections[2].state, .needsDecision)
+        XCTAssertEqual(reloaded.songs[0].sections[2].state, .locked)
+        XCTAssertEqual(reloaded.songs[0].sections[2].confidence, 0.97, accuracy: 0.0001)
 
         let mixA = asset(.fullMix, "v1", 1, songID: songID)
         let mixB = asset(.fullMix, "v2", 2, songID: songID)
