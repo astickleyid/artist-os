@@ -58,7 +58,7 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
         )
     }
 
-    func testObsoleteAppStateBypassesRemainConcentratedInSingleFile() throws {
+    func testObsoleteAppStateBypassesStayRemoved() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -66,7 +66,7 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
         let appStateURL = repositoryRoot.appendingPathComponent("Sources/ArtistOS/App/AppState.swift")
         let source = try String(contentsOf: appStateURL, encoding: .utf8)
 
-        let expectedLegacyDefinitions = [
+        let removedDefinitions = [
             "func deleteSong(id: UUID)",
             "func assign(assetID: UUID?, sectionID: UUID, songID: UUID)",
             "func setState(_ newState: SectionState, sectionID: UUID, songID: UUID)",
@@ -79,10 +79,10 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
             "func reanalyzeCatalog()"
         ]
 
-        for definition in expectedLegacyDefinitions {
-            XCTAssertTrue(
+        for definition in removedDefinitions {
+            XCTAssertFalse(
                 source.contains(definition),
-                "Legacy surface changed; update this audit before removing or replacing: \(definition)"
+                "Retired legacy AppState API was reintroduced: \(definition)"
             )
         }
     }
