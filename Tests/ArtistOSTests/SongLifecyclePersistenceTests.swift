@@ -114,4 +114,24 @@ final class SongLifecyclePersistenceTests: XCTestCase {
         XCTAssertTrue(reloaded.events.isEmpty)
         XCTAssertTrue(try store.canonicalSyncOutbox().isEmpty)
     }
+
+    func testDestructiveSongDeletionIsRetiredAndPreservesPersistentHistory() throws {
+        let store = CatalogStore(database: try AppDatabase.inMemory())
+        let song = ImportService.makeSong(title: "Keep Forever")
+        try store.upsert(song: song)
+
+        let asset = Asset(
+            id: UUID(), title: "Master", originalFilename: "master.wav", role: .fullMix,
+            createdAt: Date(), duration: nil, localURLBookmark: nil, songID: song.id
+        )
+        try store.insert(asset: asset)
+
+        XCTAssertThrowsError(try store.delete(songID: song.id)) { error in
+            XCTAssertEqual(error as? RetiredSongDeletionError, .destructiveDeletionRetired)
+        }
+
+        let reloaded = store.loadCatalog(artistName: "Test")
+        XCTAssertEqual(reloaded.songs.map(\.id), [song.id])
+        XCTAssertEqual(reloaded.assets.map(\.id), [asset.id])
+    }
 }
