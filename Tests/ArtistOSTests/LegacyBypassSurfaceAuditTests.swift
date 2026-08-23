@@ -58,7 +58,7 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
         )
     }
 
-    func testRemovedDirectMutationBypassesStayRemoved() throws {
+    func testObsoleteAppStateBypassesStayRemoved() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -74,34 +74,15 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
             "func updateNote(_ note: String, sectionID: UUID, songID: UUID)",
             "func addSection(name: String, songID: UUID)",
             "func moveSection(sectionID: UUID, songID: UUID, offset: Int)",
-            "func removeSection(sectionID: UUID, songID: UUID)"
+            "func removeSection(sectionID: UUID, songID: UUID)",
+            "func pinMaster(songID: UUID, assetID: UUID)",
+            "func reanalyzeCatalog()"
         ]
 
         for definition in removedDefinitions {
             XCTAssertFalse(
                 source.contains(definition),
-                "Retired direct legacy AppState API was reintroduced: \(definition)"
-            )
-        }
-    }
-
-    func testRemainingCompatibilityBypassesStayExplicitUntilRetired() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let appStateURL = repositoryRoot.appendingPathComponent("Sources/ArtistOS/App/AppState.swift")
-        let source = try String(contentsOf: appStateURL, encoding: .utf8)
-
-        let remainingDefinitions = [
-            "func pinMaster(songID: UUID, assetID: UUID)",
-            "func reanalyzeCatalog()"
-        ]
-
-        for definition in remainingDefinitions {
-            XCTAssertTrue(
-                source.contains(definition),
-                "Remaining compatibility surface changed; update the audit deliberately: \(definition)"
+                "Retired legacy AppState API was reintroduced: \(definition)"
             )
         }
     }
