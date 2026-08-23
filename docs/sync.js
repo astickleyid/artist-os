@@ -8,9 +8,11 @@
   /* ---------- pure: entity <-> wire encoding ---------- */
 
   // Only fields that matter for cross-device state; excludes local-only runtime
-  // fields (blob handles, decoded peaks, bookmarks, etc).
+  // fields (blob handles, decoded peaks, bookmarks, etc). Current section source
+  // and master pointers are intentionally excluded from Song changes because
+  // Master Composition owns that truth and syncs independently.
   const SONG_FIELDS = ["id", "title", "era", "status", "progress", "qualityScore",
-    "risk", "sections", "masterAssetId", "created", "updatedAt"];
+    "risk", "sections", "created", "updatedAt"];
   const ASSET_FIELDS = ["id", "songId", "title", "file", "role", "created", "updatedAt",
     "type", "modifiedAt", "sourcePath", "version", "vOrder", "dur", "hash", "size",
     "bpm", "keyName", "analysisConf", "analyzedAt", "cloudKey"];
@@ -34,12 +36,26 @@
     return out;
   }
 
+  function songDataForSync(entity) {
+    const data = pick(entity, SONG_FIELDS);
+    if (Array.isArray(data.sections)) {
+      data.sections = data.sections.map(section => {
+        const copy = { ...section };
+        delete copy.assetId;
+        delete copy.assetID;
+        return copy;
+      });
+    }
+    return data;
+  }
+
   function toChange(kind, entity, deleted) {
     const updatedAt = entity.updatedAt || entity.created || entity.t || 0;
     if (deleted) return { kind, id: entity.id, updatedAt: Date.now(), deleted: true };
     const fields = FIELDS_BY_KIND[kind];
     if (!fields) throw new Error("Unsupported sync kind: " + kind);
-    return { kind, id: entity.id, updatedAt, data: pick(entity, fields) };
+    const data = kind === "song" ? songDataForSync(entity) : pick(entity, fields);
+    return { kind, id: entity.id, updatedAt, data };
   }
 
   /* Merge a remote change into a local collection (array), keyed by id.
@@ -70,6 +86,6 @@
 
   g.AOSSync = {
     SONG_FIELDS, ASSET_FIELDS, EVENT_FIELDS, DECISION_FIELDS, MASTER_COMPOSITION_FIELDS,
-    FIELDS_BY_KIND, toChange, applyRemoteChange, makeDirtyTracker, pick
+    FIELDS_BY_KIND, toChange, applyRemoteChange, makeDirtyTracker, pick, songDataForSync
   };
 })(typeof window !== "undefined" ? window : globalThis);
