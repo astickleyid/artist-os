@@ -58,7 +58,7 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
         )
     }
 
-    func testObsoleteAppStateBypassesRemainConcentratedInSingleFile() throws {
+    func testRemovedDirectMutationBypassesStayRemoved() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -66,7 +66,7 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
         let appStateURL = repositoryRoot.appendingPathComponent("Sources/ArtistOS/App/AppState.swift")
         let source = try String(contentsOf: appStateURL, encoding: .utf8)
 
-        let expectedLegacyDefinitions = [
+        let removedDefinitions = [
             "func deleteSong(id: UUID)",
             "func assign(assetID: UUID?, sectionID: UUID, songID: UUID)",
             "func setState(_ newState: SectionState, sectionID: UUID, songID: UUID)",
@@ -74,15 +74,34 @@ final class LegacyBypassSurfaceAuditTests: XCTestCase {
             "func updateNote(_ note: String, sectionID: UUID, songID: UUID)",
             "func addSection(name: String, songID: UUID)",
             "func moveSection(sectionID: UUID, songID: UUID, offset: Int)",
-            "func removeSection(sectionID: UUID, songID: UUID)",
+            "func removeSection(sectionID: UUID, songID: UUID)"
+        ]
+
+        for definition in removedDefinitions {
+            XCTAssertFalse(
+                source.contains(definition),
+                "Retired direct legacy AppState API was reintroduced: \(definition)"
+            )
+        }
+    }
+
+    func testRemainingCompatibilityBypassesStayExplicitUntilRetired() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appStateURL = repositoryRoot.appendingPathComponent("Sources/ArtistOS/App/AppState.swift")
+        let source = try String(contentsOf: appStateURL, encoding: .utf8)
+
+        let remainingDefinitions = [
             "func pinMaster(songID: UUID, assetID: UUID)",
             "func reanalyzeCatalog()"
         ]
 
-        for definition in expectedLegacyDefinitions {
+        for definition in remainingDefinitions {
             XCTAssertTrue(
                 source.contains(definition),
-                "Legacy surface changed; update this audit before removing or replacing: \(definition)"
+                "Remaining compatibility surface changed; update the audit deliberately: \(definition)"
             )
         }
     }
