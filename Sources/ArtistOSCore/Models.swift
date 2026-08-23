@@ -101,6 +101,7 @@ public struct Song: Identifiable, Codable, Equatable {
     public var qualityScore: Double
     public var risk: String
     public var sections: [MasterSection]
+    @available(*, deprecated, message: "Legacy compatibility mirror. Use MasterComposition.outputAssetID for current master truth.")
     public var masterAssetID: UUID?
     public var updatedAt: Date
     public init(id: UUID, title: String, era: String, status: SongStatus, progress: Double,
@@ -123,6 +124,7 @@ public struct MasterSection: Identifiable, Codable, Equatable {
     public var id: UUID
     public var name: String
     public var role: String
+    @available(*, deprecated, message: "Legacy compatibility mirror. Use MasterCompositionSection sourceAsset selection for current source truth.")
     public var assetID: UUID?
     public var state: SectionState
     public var confidence: Double
