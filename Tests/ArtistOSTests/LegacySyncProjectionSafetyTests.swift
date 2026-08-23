@@ -3,7 +3,7 @@ import ArtistOSCore
 @testable import ArtistOS
 
 final class LegacySyncProjectionSafetyTests: XCTestCase {
-    func testLegacySongSyncRoundTripReconstructsCanonicalMasterComposition() throws {
+    func testNewSongSyncNoLongerCarriesLegacySourceOrMasterProjectionTruth() throws {
         let songID = UUID()
         let sectionID = UUID()
         let sourceAssetID = UUID()
@@ -31,6 +31,10 @@ final class LegacySyncProjectionSafetyTests: XCTestCase {
         )
 
         let payload = SyncLogic.songPayload(original)
+        XCTAssertNil(payload["masterAssetId"])
+        let encodedSections = try XCTUnwrap(payload["sections"] as? [SyncLogic.JSONDict])
+        XCTAssertNil(try XCTUnwrap(encodedSections.first)["assetId"])
+
         let merged = try XCTUnwrap(
             SyncLogic.mergedSong(
                 payload: payload,
@@ -45,15 +49,15 @@ final class LegacySyncProjectionSafetyTests: XCTestCase {
             events: [],
             masterCompositions: []
         )
-        let composition = try XCTUnwrap(catalog.masterComposition(for: songID))
-        let projectedSection = try XCTUnwrap(composition.sections.first)
+        let projected = try XCTUnwrap(catalog.masterComposition(for: songID))
+        let projectedSection = try XCTUnwrap(projected.sections.first)
 
-        XCTAssertEqual(composition.outputAssetID, masterAssetID)
-        XCTAssertEqual(composition.updatedAt, original.updatedAt)
+        XCTAssertNil(projected.outputAssetID)
+        XCTAssertEqual(projected.updatedAt, original.updatedAt)
         XCTAssertEqual(projectedSection.id, sectionID)
         XCTAssertEqual(projectedSection.name, section.name)
         XCTAssertEqual(projectedSection.role, section.role)
-        XCTAssertEqual(projectedSection.selection(.sourceAsset)?.referenceID, sourceAssetID)
+        XCTAssertNil(projectedSection.selection(.sourceAsset)?.referenceID)
         XCTAssertEqual(projectedSection.state, section.state)
         XCTAssertEqual(projectedSection.confidence, section.confidence, accuracy: 0.0001)
         XCTAssertEqual(projectedSection.note, section.note)

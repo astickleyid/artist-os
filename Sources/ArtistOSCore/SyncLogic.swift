@@ -21,20 +21,24 @@ public enum SyncLogic {
 
     private static func msSince1970(_ date: Date) -> Double { date.timeIntervalSince1970 * 1000 }
 
+    /// Legacy Song section wire shape. Source selection is intentionally omitted:
+    /// MasterComposition is the only current creative source of truth and syncs
+    /// independently. The decoder still accepts assetID from older clients.
     public static func dict(fromSection section: MasterSection) -> JSONDict {
         [
             "id": section.id.uuidString, "name": section.name, "role": section.role,
-            "assetID": section.assetID?.uuidString as Any, "state": section.state.rawValue,
+            "state": section.state.rawValue,
             "confidence": section.confidence, "note": section.note
         ]
     }
 
+    /// Song sync keeps identity/workflow compatibility metadata only. Current
+    /// source/master pointers travel exclusively in MasterComposition.
     public static func songPayload(_ song: Song) -> JSONDict {
         [
             "id": song.id.uuidString, "title": song.title, "era": song.era,
             "status": song.status.rawValue, "progress": song.progress,
             "qualityScore": song.qualityScore, "risk": song.risk,
-            "masterAssetId": song.masterAssetID?.uuidString as Any,
             "sections": song.sections.map(dict(fromSection:))
         ]
     }
