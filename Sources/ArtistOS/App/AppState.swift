@@ -136,127 +136,6 @@ final class AppState: ObservableObject {
                summary: "Renamed from \(old) to \(trimmed).")
     }
 
-    func deleteSong(id: UUID) {
-        guard let si = songIndex(id) else { return }
-        if let playingID = audio.playingAssetID,
-           catalog.assets.first(where: { $0.id == playingID })?.songID == id {
-            audio.stop()
-        }
-        let title = catalog.songs[si].title
-        catalog.songs.remove(at: si)
-        catalog.assets.removeAll { $0.songID == id }
-        catalog.events.removeAll { $0.songID == id }
-        catalog.decisions.removeAll { $0.songID == id }
-        catalog.removeMasterComposition(for: id)
-        do { try store.delete(songID: id) }
-        catch { logger.error("Failed to delete song: \(error.localizedDescription)") }
-        if selectedSongID == id {
-            selectedSongID = catalog.songs.first?.id
-            selectedAssetID = nil
-        }
-        logger.info("Deleted song \(title)")
-    }
-
-    func assign(assetID: UUID?, sectionID: UUID, songID: UUID) {
-        guard let si = songIndex(songID),
-              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        let before = catalog.songs[si].sections[xi].assetID
-        guard before != assetID else { return }
-
-        catalog.songs[si].sections[xi].assetID = assetID
-        if assetID != nil, catalog.songs[si].sections[xi].state == .open {
-            catalog.songs[si].sections[xi].state = .candidate
-            catalog.songs[si].sections[xi].confidence = max(catalog.songs[si].sections[xi].confidence, 0.5)
-        }
-        persistSong(at: si)
-
-        let sectionName = catalog.songs[si].sections[xi].name
-        let assetName = asset(id: assetID)?.title ?? "none"
-        record(
-            songID: songID,
-            target: target(forSectionName: sectionName),
-            operation: assetID == nil ? .structureUpdated : .sourceSelected,
-            before: before,
-            after: assetID,
-            summary: assetID == nil
-                ? "\(sectionName) source cleared."
-                : "\(assetName) selected as \(sectionName) source."
-        )
-    }
-
-    func setState(_ newState: SectionState, sectionID: UUID, songID: UUID) {
-        guard let si = songIndex(songID),
-              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        let old = catalog.songs[si].sections[xi].state
-        guard old != newState else { return }
-
-        catalog.songs[si].sections[xi].state = newState
-        if newState == .locked {
-            catalog.songs[si].sections[xi].confidence = max(catalog.songs[si].sections[xi].confidence, 0.9)
-        }
-        persistSong(at: si)
-
-        let sectionName = catalog.songs[si].sections[xi].name
-        record(
-            songID: songID,
-            target: target(forSectionName: sectionName),
-            operation: operation(forState: newState),
-            summary: "\(sectionName) moved from \(old.rawValue) to \(newState.rawValue)."
-        )
-    }
-
-    func resolveDecision(sectionID: UUID, songID: UUID, winner: UUID) {
-        assign(assetID: winner, sectionID: sectionID, songID: songID)
-        setState(.locked, sectionID: sectionID, songID: songID)
-    }
-
-    func updateNote(_ note: String, sectionID: UUID, songID: UUID) {
-        guard let si = songIndex(songID),
-              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        catalog.songs[si].sections[xi].note = note
-        persistSong(at: si)
-    }
-
-    func addSection(name: String, songID: UUID) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let si = songIndex(songID) else { return }
-        let section = MasterSection(
-            id: UUID(), name: trimmed, role: "Custom",
-            assetID: nil, state: .open, confidence: 0, note: ""
-        )
-        catalog.songs[si].sections.append(section)
-        persistSong(at: si)
-        record(songID: songID, target: .song, operation: .structureUpdated,
-               summary: "\(trimmed) slot added to master composition.")
-    }
-
-    func moveSection(sectionID: UUID, songID: UUID, offset: Int) {
-        guard let si = songIndex(songID),
-              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        let destination = xi + offset
-        guard destination >= 0, destination < catalog.songs[si].sections.count else { return }
-        catalog.songs[si].sections.swapAt(xi, destination)
-        persistSong(at: si)
-        let name = catalog.songs[si].sections[destination].name
-        record(songID: songID, target: .song, operation: .structureUpdated,
-               summary: "\(name) moved to position \(destination + 1).")
-    }
-
-    func removeSection(sectionID: UUID, songID: UUID) {
-        guard let si = songIndex(songID),
-              let xi = catalog.songs[si].sections.firstIndex(where: { $0.id == sectionID })
-        else { return }
-        let name = catalog.songs[si].sections[xi].name
-        catalog.songs[si].sections.remove(at: xi)
-        persistSong(at: si)
-        record(songID: songID, target: .song, operation: .structureUpdated,
-               summary: "\(name) slot removed from master composition.")
-    }
-
     // MARK: - Events
 
     func logManualEvent(target: EventTarget, operation: EventOperation, summary: String, assetID: UUID?) {
@@ -635,7 +514,8 @@ final class AppState: ObservableObject {
         for id in touched {
             guard let song = catalog.songs.first(where: { $0.id == id }) else { continue }
             if assets(for: id).isEmpty, song.sections.allSatisfy({ $0.assetID == nil }) {
-                deleteSong(id: id)
+                // Destructive deletion is retired; retain permanent Song identity/history.
+                logger.info("Retained empty song \(song.title) after filename re-analysis.")
             }
         }
         runDecisionEngine()
