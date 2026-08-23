@@ -529,12 +529,6 @@ final class AppState: ObservableObject {
             let timestamp = Date()
             composition.updatedAt = timestamp
             var updatedSong = catalog.songs[si]
-            let canonicalByID = Dictionary(uniqueKeysWithValues: composition.sections.map { ($0.id, $0) })
-            for index in updatedSong.sections.indices {
-                guard let canonical = canonicalByID[updatedSong.sections[index].id] else { continue }
-                updatedSong.sections[index].state = canonical.state
-                updatedSong.sections[index].confidence = canonical.confidence
-            }
 
             let locked = composition.sections.filter { $0.state == .locked }.count
             updatedSong.progress = composition.sections.isEmpty
