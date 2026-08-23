@@ -27,6 +27,14 @@ enum CanonicalSyncOutboxError: LocalizedError {
     }
 }
 
+enum RetiredSongDeletionError: LocalizedError {
+    case destructiveDeletionRetired
+
+    var errorDescription: String? {
+        "Destructive Song deletion is retired. Archive or restore the permanent Song identity instead."
+    }
+}
+
 /// Write-through persistence layer. The in-memory `ArtistCatalog` remains the
 /// UI's source of truth; every mutation is mirrored to SQLite through this store.
 final class CatalogStore {
@@ -306,11 +314,10 @@ final class CatalogStore {
         }
     }
 
+    /// Retained temporarily for source compatibility with the obsolete AppState
+    /// deletion surface. Persistent Song identity/history must never be destroyed.
     func delete(songID: UUID) throws {
-        _ = try database.dbQueue.write { db in
-            try AssetRecord.filter(Column("songID") == songID).deleteAll(db)
-            try SongRecord.filter(Column("id") == songID).deleteAll(db)
-        }
+        throw RetiredSongDeletionError.destructiveDeletionRetired
     }
 
     func insert(asset: Asset) throws { try database.dbQueue.write { db in try AssetRecord(asset).save(db) } }
