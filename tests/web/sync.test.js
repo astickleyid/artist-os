@@ -5,13 +5,18 @@ const assert = require('assert');
 // toChange: song
 (function () {
   const song = { id: 's1', title: 'Night Drive', era: '2026', status: 'Review', progress: 0.5,
-    qualityScore: 80, risk: 'low', sections: [{ id: 'x', name: 'Hook', state: 'open' }],
-    masterAssetId: null, created: 1000, updatedAt: 1500, localOnlyJunk: 'nope' };
+    qualityScore: 80, risk: 'low',
+    sections: [{ id: 'x', name: 'Hook', state: 'open', assetId: 'legacy-a1', assetID: 'legacy-a1' }],
+    masterAssetId: 'legacy-master', created: 1000, updatedAt: 1500, localOnlyJunk: 'nope' };
   const c = S.toChange('song', song);
   assert.equal(c.kind, 'song'); assert.equal(c.id, 's1'); assert.equal(c.updatedAt, 1500);
   assert.equal(c.data.title, 'Night Drive');
   assert.equal(c.data.localOnlyJunk, undefined, 'unlisted fields excluded');
-  console.log('✓ toChange(song) picks known fields, drops junk');
+  assert.equal(c.data.masterAssetId, undefined, 'current master syncs via Master Composition');
+  assert.equal(c.data.sections[0].assetId, undefined, 'section source syncs via Master Composition');
+  assert.equal(c.data.sections[0].assetID, undefined, 'native legacy spelling is stripped too');
+  assert.equal(c.data.sections[0].name, 'Hook', 'non-source compatibility section metadata remains');
+  console.log('✓ toChange(song) omits retired source/master mirrors and drops junk');
 })();
 
 // toChange: falls back to created when no updatedAt
