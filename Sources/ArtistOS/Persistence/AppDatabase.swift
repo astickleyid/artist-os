@@ -31,6 +31,92 @@ final class AppDatabase {
         try AppDatabase(DatabaseQueue())
     }
 
+    /// Materializes first-class canonical Master Composition rows from the
+    /// legacy Song/section mirror only when a Song has no persisted canonical
+    /// composition yet. This is intentionally idempotent so migration tests can
+    /// exercise it directly and existing canonical truth is never overwritten.
+    static func materializeLegacyMasterCompositions(in db: Database) throws {
+        let songs = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT id, masterAssetID, updatedAt
+            FROM song
+            WHERE NOT EXISTS (
+                SELECT 1 FROM masterComposition
+                WHERE masterComposition.songID = song.id
+            )
+            """
+        )
+
+        for song in songs {
+            let songID: String = song["id"]
+            let outputAssetID: String? = song["masterAssetID"]
+            let storedUpdatedAt: Date? = song["updatedAt"]
+            let updatedAt = storedUpdatedAt ?? Date(timeIntervalSince1970: 0)
+
+            // Reuse the permanent Song ID as the canonical composition ID. This
+            // matches MasterComposition.projected(from:) and keeps migration
+            // identity deterministic across direct upgrades and repeated tests.
+            try db.execute(
+                sql: """
+                INSERT INTO masterComposition (id, songID, outputAssetID, updatedAt)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [songID, songID, outputAssetID, updatedAt]
+            )
+
+            let sections = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, position, name, role, assetID, state, confidence, note
+                FROM section
+                WHERE songID = ?
+                ORDER BY position
+                """,
+                arguments: [songID]
+            )
+
+            for section in sections {
+                let sectionID: String = section["id"]
+                let position: Int = section["position"]
+                let name: String = section["name"]
+                let role: String = section["role"]
+                let sourceAssetID: String? = section["assetID"]
+                let state: String = section["state"]
+                let confidence: Double = section["confidence"]
+                let note: String = section["note"]
+
+                try db.execute(
+                    sql: """
+                    INSERT INTO masterCompositionSection
+                        (id, compositionID, position, name, role, state, confidence, note)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        sectionID, songID, position, name, role,
+                        state, confidence, note
+                    ]
+                )
+
+                guard let sourceAssetID else { continue }
+
+                // A legacy section can contain at most one source binding, so its
+                // stable section ID is also a deterministic selection ID. The two
+                // IDs live in different tables and therefore cannot collide.
+                try db.execute(
+                    sql: """
+                    INSERT INTO masterSelection
+                        (id, sectionID, kind, referenceID, decisionID, selectedAt)
+                    VALUES (?, ?, ?, ?, NULL, ?)
+                    """,
+                    arguments: [
+                        sectionID, sectionID, "Source Asset", sourceAssetID, updatedAt
+                    ]
+                )
+            }
+        }
+    }
+
     private var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
@@ -209,6 +295,14 @@ final class AppDatabase {
                 t.column("updatedAt", .double).notNull()
                 t.column("payload", .blob).notNull()
             }
+        }
+
+        // Direct upgrades must preserve legacy source/master truth before the
+        // compatibility columns are removed. Materialize a canonical composition
+        // for every Song that does not already have one; existing canonical rows
+        // always win and are never overwritten by legacy mirrors.
+        migrator.registerMigration("v10") { db in
+            try Self.materializeLegacyMasterCompositions(in: db)
         }
 
         return migrator
