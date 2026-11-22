@@ -49,8 +49,10 @@ final class AppDatabase {
         )
 
         for song in songs {
-            let songID: String = song["id"]
-            let outputAssetID: String? = song["masterAssetID"]
+            // GRDB can persist UUIDs as 16-byte BLOBs even in TEXT-affinity columns.
+            // Bind the original SQLite values so equality and foreign keys keep working.
+            let songID: DatabaseValue = song["id"]
+            let outputAssetID: DatabaseValue = song["masterAssetID"]
             let storedUpdatedAt: Date? = song["updatedAt"]
             let updatedAt = storedUpdatedAt ?? Date(timeIntervalSince1970: 0)
 
@@ -77,11 +79,11 @@ final class AppDatabase {
             )
 
             for section in sections {
-                let sectionID: String = section["id"]
+                let sectionID: DatabaseValue = section["id"]
                 let position: Int = section["position"]
                 let name: String = section["name"]
                 let role: String = section["role"]
-                let sourceAssetID: String? = section["assetID"]
+                let sourceAssetID: DatabaseValue = section["assetID"]
                 let state: String = section["state"]
                 let confidence: Double = section["confidence"]
                 let note: String = section["note"]
@@ -98,7 +100,8 @@ final class AppDatabase {
                     ]
                 )
 
-                guard let sourceAssetID else { continue }
+                // GRDB preserves SQL NULL as DatabaseValue.null, not Swift nil.
+                guard !sourceAssetID.isNull else { continue }
 
                 // A legacy section can contain at most one source binding, so its
                 // stable section ID is also a deterministic selection ID. The two
