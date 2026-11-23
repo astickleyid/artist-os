@@ -8,7 +8,9 @@ on:
 
 jobs:
   unit:
-    runs-on: ubuntu-24.04
+    # Playwright 1.55's browser dependency installer is verified on this LTS image.
+    # Pinning avoids an unreviewed ubuntu-latest image change breaking the E2E gate.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
@@ -25,8 +27,11 @@ jobs:
       - name: Worker tests
         run: node worker/test/worker.test.js
       - name: Install Playwright browser for canonical reload test
+        env:
+          # Prevent npm postinstall from starting a second, implicit browser download.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
-          npm install --no-save playwright@1.55.0
+          npm install --no-save --package-lock=false playwright@1.55.0
           npx playwright install --with-deps chromium
       - name: Canonical web metadata survives browser reload
         run: node tests/web/canonical-web.e2e.js
